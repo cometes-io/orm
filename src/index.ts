@@ -6,3 +6,5 @@
  * @packageDocumentation
  */
 export { Orm, type OrmOptions } from "./orm.js";
+export { PostgresClient, type PostgresOptions } from "./postgres/index.js";
+export { RedisClient, type RedisOptions } from "./redis/index.js";

@@ -1,3 +1,6 @@
+import { PostgresClient, type PostgresOptions } from "./postgres/index.js";
+import { RedisClient, type RedisOptions } from "./redis/index.js";
+
 /**
  * Options de configuration d'une instance {@link Orm}.
  */
@@ -9,20 +12,32 @@ export type OrmOptions = {
    * @defaultValue `"default"`
    */
   name?: string;
+  /** Options PostgreSQL (persistance). */
+  postgres?: PostgresOptions;
+  /** Options Redis (cache / files). */
+  redis?: RedisOptions;
 };
 
 /**
  * Point d'entrée de l'ORM.
  *
+ * Agrège les clients PostgreSQL et Redis.
+ *
  * @example
  * ```ts
  * const orm = new Orm({ name: "demo" });
+ * await orm.connect();
  * console.log(orm.ping()); // "orm:demo"
+ * await orm.disconnect();
  * ```
  */
 export class Orm {
   /** Identifiant logique de cette instance. */
   readonly name: string;
+  /** Client PostgreSQL. */
+  readonly postgres: PostgresClient;
+  /** Client Redis. */
+  readonly redis: RedisClient;
 
   /**
    * Crée une instance ORM.
@@ -31,6 +46,8 @@ export class Orm {
    */
   constructor(options: OrmOptions = {}) {
     this.name = options.name ?? "default";
+    this.postgres = new PostgresClient(options.postgres);
+    this.redis = new RedisClient(options.redis);
   }
 
   /**
@@ -41,17 +58,14 @@ export class Orm {
   ping(): string {
     return `orm:${this.name}`;
   }
+
+  /** Connecte PostgreSQL et Redis. */
+  async connect(): Promise<void> {
+    await Promise.all([this.postgres.connect(), this.redis.connect()]);
+  }
+
+  /** Déconnecte PostgreSQL et Redis. */
+  async disconnect(): Promise<void> {
+    await Promise.all([this.postgres.disconnect(), this.redis.disconnect()]);
+  }
 }
-
-
-/// ON MANIPULES POSTGRESQL
-//// INITIALISATION
-//// CONNEXION
-//// CRUD
-//// DECONNEXION
-
-/// ON MANIPULES REDIS
-//// INITIALISATION
-//// CONNEXION
-//// CRUD + CACHE + QUEUE
-//// DECONNEXION

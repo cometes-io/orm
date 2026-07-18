@@ -16,7 +16,9 @@ npm install @cometes-io/orm
 import { Orm } from "@cometes-io/orm";
 
 const orm = new Orm({ name: "demo" });
+await orm.connect();
 console.log(orm.ping()); // → "orm:demo"
+await orm.disconnect();
 ```
 
 ## Documentation
@@ -33,7 +35,12 @@ console.log(orm.ping()); // → "orm:demo"
 npm run build      # compile src/ → dist/
 npm run example    # lance l’exemple local
 npm test           # tests unitaires
+npm run ci         # typecheck + tests + build (utilisé en CI)
 ```
+
+## CI
+
+À chaque push / PR sur `main`, GitHub Actions exécute typecheck, tests et build sur Node 20 et 22 (voir [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ## Licence
 
