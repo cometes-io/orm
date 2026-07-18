@@ -1,0 +1,17 @@
+# Override pour le mode watch Node (tsx watch + sync des sources).
+# Utilisé par : npm run example:docker:watch
+services:
+  nodejs:
+    command: ["npm", "run", "example:watch"]
+    develop:
+      watch:
+        - path: ../src
+          target: /app/src
+          action: sync
+        - path: ./nodejs
+          target: /app/examples/nodejs
+          action: sync
+        - path: ../package.json
+          action: rebuild
+        - path: ../package-lock.json
+          action: rebuild

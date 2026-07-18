@@ -1,0 +1,66 @@
+name: cometes-orm
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: cometes-orm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: orm
+      POSTGRES_PASSWORD: orm
+      POSTGRES_DB: orm
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - orm-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orm -d orm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    container_name: cometes-orm-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - orm-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  nodejs:
+    image: cometes/orm
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile
+    container_name: cometes-orm-nodejs
+    restart: unless-stopped
+    environment:
+      KEEP_ALIVE: "1"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: orm
+      POSTGRES_PASSWORD: orm
+      POSTGRES_DB: orm
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - orm-net
+
+networks:
+  orm-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
