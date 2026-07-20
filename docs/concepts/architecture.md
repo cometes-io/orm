@@ -9,6 +9,8 @@ orm/
 ├── src/
 │   ├── index.ts         # exports publics
 │   ├── orm.ts           # façade Orm
+│   ├── migrate/         # runner de migrations SQL
+│   ├── model/           # déclaration de modèles
 │   ├── postgres/        # persistance
 │   └── redis/           # cache / files
 ├── examples/            # usages concrets + Docker Compose
@@ -19,9 +21,10 @@ orm/
 | Dossier | Responsabilité |
 |---------|----------------|
 | `src/` | Code distribué via npm ; seuls les exports de `index.ts` sont publics |
+| `src/migrate/` | Runner des migrations TypeScript Sequelize + table `migrations` |
 | `src/postgres/` | Client PostgreSQL (init → connexion → CRUD → déconnexion) |
 | `src/redis/` | Client Redis (init → connexion → CRUD / cache / queue → déconnexion) |
-| `examples/` | Preuves exécutables (Node, compose) — pas de doc dupliquée |
+| `examples/` | Preuves exécutables (Node, compose, migrations) |
 | `tests/` | Comportement attendu de l’API publique |
 | `docs/` | Guides et concepts ; la référence API vit dans le TSDoc de `src/` |
 
@@ -32,11 +35,9 @@ Le reste de `src/` est considéré interne jusqu’à export explicite.
 
 ## Évolution prévue
 
-L’ORM s’étendra typiquement autour de :
+L’ORM s’étend autour de :
 
 1. **Connexion** — Postgres (persistance), Redis (cache / files)
 2. **Modèles** — description des entités et relations
 3. **Requêtes** — lecture / écriture typées
-4. **Migrations** — évolution du schéma
-
-Chaque brique aura sa page dans `docs/guide/` quand elle existera ; cette page restera le modèle mental global.
+4. **Migrations** — fichiers TypeScript (`up`) via `orm.migrate()`

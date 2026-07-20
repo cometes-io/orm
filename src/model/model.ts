@@ -64,7 +64,11 @@ export type Model<
 export function defineModel<
   TSchema extends Record<string, DefineModelSchema>, TClient extends PostgresClient
 >(options: DefineModelOptions<TSchema>, client: TClient): Model<TSchema> {
-  const model = client.dbInstance!.define(options.name, client.formatModelSchema(options.schema));
+  const model = client.dbInstance!.define(options.name, client.formatModelSchema(options.schema), {
+    createdAt: false,
+    updatedAt: false,
+    deletedAt: false,
+  });
   console.log(model, model.getAttributes());
   return {
     name: options.name,
@@ -73,7 +77,9 @@ export function defineModel<
       return await model.create(client.getFieldsFromSchema(data, model.getAttributes()));
     },
     findAll: async () => {
-      return []; //await model.findAll();
+      return await model.findAll({
+        raw: true,
+      });
     },
   };
 }

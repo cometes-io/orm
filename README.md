@@ -15,9 +15,11 @@ npm install @cometes-io/orm
 ```ts
 import { Orm } from "@cometes-io/orm";
 
-const orm = new Orm({ name: "demo" });
-await orm.connect();
-console.log(orm.ping()); // → "orm:demo"
+const orm = new Orm({
+  postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+});
+await orm.migrate("./migrations");
+console.log(await orm.ping());
 await orm.disconnect();
 ```
 
@@ -26,6 +28,7 @@ await orm.disconnect();
 | Section | Contenu |
 |---------|---------|
 | [Guide de démarrage](docs/guide/getting-started.md) | Installer, lancer l’exemple, Docker |
+| [Migrations](docs/guide/migrations.md) | SQL versionnés + Adminer |
 | [Architecture](docs/concepts/architecture.md) | Modèle mental du projet |
 | [Exemple Node.js](examples/nodejs/) | Code exécutable |
 
@@ -33,6 +36,7 @@ await orm.disconnect();
 
 ```bash
 npm run build      # compile src/ → dist/
+npm run migrate    # applique examples/nodejs/migrations/*.ts
 npm run example    # lance l’exemple local
 npm test           # tests unitaires
 npm run ci         # typecheck + tests + build (utilisé en CI)

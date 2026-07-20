@@ -4,10 +4,11 @@ import { PostgresClient } from "../src/index.js";
 describe("PostgresClient", () => {
   let client: PostgresClient;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     client = new PostgresClient({
       url: "postgresql://orm:orm@localhost:5432/orm",
     });
+    await client.connect();
   });
 
   afterEach(async () => {
@@ -26,13 +27,11 @@ describe("PostgresClient", () => {
   });
 
   it("autorise query une fois connecté", async () => {
-    await client.connect();
     expect(client.connected).toBe(true);
     await expect(client.query("SELECT 1")).resolves.toEqual([]);
   });
 
   it("se déconnecte proprement", async () => {
-    await client.connect();
     await client.disconnect();
     expect(client.connected).toBe(false);
   });

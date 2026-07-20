@@ -19,33 +19,37 @@ npm install
 ```ts
 import { Orm } from "@cometes-io/orm";
 
-const orm = new Orm({ name: "app" });
-orm.ping(); // "orm:app"
+const orm = new Orm({
+  postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+});
+await orm.migrate("./migrations");
+console.log(await orm.ping());
 ```
 
-En local, sans publier le package, l’exemple importe directement les sources :
+En local, sans publier le package :
 
 ```bash
+npm run migrate   # applique examples/nodejs/migrations/*.ts
 npm run example
 ```
 
 Voir le code : [`examples/nodejs/index.ts`](../../examples/nodejs/index.ts).
 
-## Stack Docker (Postgres + Redis + Node)
-
-Depuis la racine du dépôt :
+## Stack Docker (Postgres + Redis + Node + Adminer)
 
 ```bash
 docker compose -f examples/docker-compose.yml up --build
 ```
 
-Services sur le network `orm-net` :
+| Service    | Port  | Rôle |
+|------------|-------|------|
+| PostgreSQL | 5432 (interne) | Persistance |
+| Redis      | 6379 (interne) | Cache / files |
+| migrate    | — | Applique les SQL puis s’arrête |
+| Node.js    | — | Exemple applicatif |
+| Adminer    | **8080** | UI pour lire la BDD |
 
-| Service    | Port | Accès depuis Node |
-|------------|------|-------------------|
-| PostgreSQL | 5432 | `postgres:5432`   |
-| Redis      | 6379 | `redis:6379`      |
-| Node.js    | —    | conteneur `orm-nodejs` |
+Adminer : http://localhost:8080 — serveur `postgres`, user/pass/db `orm`.
 
 Arrêt :
 
@@ -55,5 +59,6 @@ docker compose -f examples/docker-compose.yml down
 
 ## Suite
 
+- [Migrations](./migrations.md)
 - [Architecture](../concepts/architecture.md)
 - [Index de la doc](../README.md)

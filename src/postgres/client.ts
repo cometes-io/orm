@@ -54,10 +54,10 @@ export class PostgresClient {
   /** Ferme la connexion. */
   async disconnect(): Promise<void> {
     if (!this.dbInstance) {
-      throw new Error("PostgresClient is not connected");
+      return;
     }
     await this.dbInstance.close();
-    this.dbInstance = undefined as unknown as Sequelize;
+    delete this.dbInstance;
   }
 
   /** Indique si le client est sain et ses informations de santé. */
@@ -98,6 +98,7 @@ export class PostgresClient {
       list[key] = {
         type: getType(value.type),
         primaryKey: value.primary ?? false,
+        autoIncrement: value.primary ?? false,
       }
     }
 

@@ -10,7 +10,7 @@ console.log(
 );
 
 const startTest = async () => {
-  console.log("startTest");
+  console.time("start - test");
 
   //console.log(UserModel)
   //console.log(orm.models)
@@ -20,8 +20,8 @@ const startTest = async () => {
     age: 30, // not in schema -> not added to the query
   });
 
-  await UserModel.findAll();
-  console.log("endTest");
+  console.log(await UserModel.findAll());
+  console.timeEnd("start - test");
 }
 
 startTest();

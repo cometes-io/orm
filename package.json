@@ -21,6 +21,8 @@
     "example:watch": "tsx watch examples/nodejs/index.ts",
     "example:docker": "docker compose -f examples/docker-compose.yml up --build",
     "example:docker:watch": "docker compose -f examples/docker-compose.yml -f examples/docker-compose.watch.yml up --build --watch",
+    "example:docker:migrate": "docker compose -f examples/docker-compose.migrate.yml up --build",
+    "migrate": "tsx examples/nodejs/migrate.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",

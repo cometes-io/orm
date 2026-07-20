@@ -1,5 +1,5 @@
-import { Sequelize } from "sequelize";
 import { DefineModelOptions, DefineModelSchema, Model, defineModel } from "./model/model.js";
+import { runMigrations, type MigrateResult } from "./migrate/index.js";
 import { PostgresClient, type PostgresOptions } from "./postgres/index.js";
 import { RedisClient, type RedisOptions } from "./redis/index.js";
 
@@ -20,10 +20,10 @@ export type OrmOptions = {
  *
  * @example
  * ```ts
- * const orm = new Orm({ name: "demo" });
- * await orm.connect();
- * console.log(orm.ping()); // "orm:demo"
- * await orm.disconnect();
+ * const orm = new Orm({
+ *   postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+ * });
+ * await orm.migrate("./migrations");
  * ```
  */
 export class Orm {
@@ -47,7 +47,7 @@ export class Orm {
   /**
    * Vérifie que l'instance répond (stub de santé).
    *
-   * @returns Chaîne au format `orm:<name>`
+   * @returns État de santé postgres / redis
    */
   async ping(): Promise<{ postgres: boolean; redis: boolean }> {
     return {
@@ -66,9 +66,21 @@ export class Orm {
     await Promise.all([this.postgres.disconnect(), this.redis.disconnect()]);
   }
 
+  /**
+   * Applique les migrations SQL d'un dossier.
+   *
+   * @param directory - Chemin vers les fichiers `*.sql`
+   */
+  async migrate(directory: string): Promise<MigrateResult> {
+    await this.connect();
+    return runMigrations(this.postgres, { directory });
+  }
+
   /** Déclare un modèle (table / collection) avec son schéma. */
-  declareModel<TSchema extends Record<string, DefineModelSchema>>(options: DefineModelOptions<TSchema>): Model<TSchema> {
-    if(!this.postgres.dbInstance) {
+  declareModel<TSchema extends Record<string, DefineModelSchema>>(
+    options: DefineModelOptions<TSchema>,
+  ): Model<TSchema> {
+    if (!this.postgres.dbInstance) {
       throw new Error("PostgreSQL database instance not found");
     }
 
