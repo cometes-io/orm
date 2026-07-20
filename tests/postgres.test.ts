@@ -6,10 +6,7 @@ describe("PostgresClient", () => {
 
   beforeEach(() => {
     client = new PostgresClient({
-      host: "localhost",
-      port: 5432,
-      user: "orm",
-      database: "orm",
+      url: "postgresql://orm:orm@localhost:5432/orm",
     });
   });
 
@@ -17,16 +14,12 @@ describe("PostgresClient", () => {
     await client.disconnect();
   });
 
-  it("applique les options et les valeurs par défaut", () => {
-    const defaults = new PostgresClient();
-    expect(defaults.host).toBe("localhost");
-    expect(defaults.port).toBe(5432);
-    expect(defaults.user).toBe("orm");
-    expect(defaults.database).toBe("orm");
-    expect(defaults.connected).toBe(false);
+  it("applique l'url fournie", () => {
+    expect(client.url).toBe("postgresql://orm:orm@localhost:5432/orm");
   });
 
   it("refuse query sans connexion", async () => {
+    await client.disconnect();
     await expect(client.query("SELECT 1")).rejects.toThrow(
       "PostgresClient is not connected",
     );

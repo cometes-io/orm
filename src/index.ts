@@ -6,5 +6,12 @@
  * @packageDocumentation
  */
 export { Orm, type OrmOptions } from "./orm.js";
+export {
+  defineModel,
+  type DefineModelOptions,
+  type DefineModelSchema,
+  type Model,
+  type TValues,
+} from "./model/model.js";
 export { PostgresClient, type PostgresOptions } from "./postgres/index.js";
 export { RedisClient, type RedisOptions } from "./redis/index.js";

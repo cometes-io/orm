@@ -6,36 +6,25 @@ describe("Orm", () => {
 
   afterEach(async () => {
     if (orm) {
-      await orm.disconnect();
+      await orm.disconnect().catch(() => undefined);
     }
-  });
-
-  it("utilise le nom fourni", () => {
-    orm = new Orm({ name: "test" });
-    expect(orm.ping()).toBe("orm:test");
-  });
-
-  it("utilise le nom par défaut", () => {
-    orm = new Orm();
-    expect(orm.ping()).toBe("orm:default");
   });
 
   it("expose les clients postgres et redis", () => {
     orm = new Orm({
-      postgres: { host: "db", database: "app" },
-      redis: { host: "cache", port: 6380 },
+      postgres: { url: "postgresql://orm:orm@db:5432/app" },
+      redis: { url: "redis://cache:6380" },
     });
 
-    expect(orm.postgres.host).toBe("db");
-    expect(orm.postgres.database).toBe("app");
-    expect(orm.redis.host).toBe("cache");
-    expect(orm.redis.port).toBe(6380);
+    expect(orm.postgres.url).toBe("postgresql://orm:orm@db:5432/app");
+    expect(orm.redis.url).toBe("redis://cache:6380");
   });
 
   it("connecte et déconnecte les deux clients", async () => {
-    orm = new Orm();
-    expect(orm.postgres.connected).toBe(false);
-    expect(orm.redis.connected).toBe(false);
+    orm = new Orm({
+      postgres: { url: "postgresql://orm:orm@localhost:5432/orm" },
+      redis: { url: "redis://localhost:6379" },
+    });
 
     await orm.connect();
     expect(orm.postgres.connected).toBe(true);
@@ -44,5 +33,16 @@ describe("Orm", () => {
     await orm.disconnect();
     expect(orm.postgres.connected).toBe(false);
     expect(orm.redis.connected).toBe(false);
+  });
+
+  it("ping retourne l'état des clients", async () => {
+    orm = new Orm({
+      postgres: { url: "postgresql://orm:orm@localhost:5432/orm" },
+      redis: { url: "redis://localhost:6379" },
+    });
+
+    const status = await orm.ping();
+    expect(status).toHaveProperty("postgres");
+    expect(status).toHaveProperty("redis");
   });
 });

@@ -5,21 +5,19 @@ describe("RedisClient", () => {
   let client: RedisClient;
 
   beforeEach(() => {
-    client = new RedisClient({ host: "localhost", port: 6379 });
+    client = new RedisClient({ url: "redis://localhost:6379" });
   });
 
   afterEach(async () => {
     await client.disconnect();
   });
 
-  it("applique les options et les valeurs par défaut", () => {
-    const defaults = new RedisClient();
-    expect(defaults.host).toBe("localhost");
-    expect(defaults.port).toBe(6379);
-    expect(defaults.connected).toBe(false);
+  it("applique l'url fournie", () => {
+    expect(client.url).toBe("redis://localhost:6379");
   });
 
   it("refuse les opérations sans connexion", async () => {
+    await client.disconnect();
     await expect(client.set("k", "v")).rejects.toThrow(
       "RedisClient is not connected",
     );

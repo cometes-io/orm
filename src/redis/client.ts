@@ -2,8 +2,7 @@
  * Options de connexion Redis.
  */
 export type RedisOptions = {
-  host?: string;
-  port?: number;
+  url: string;
 };
 
 /**
@@ -12,14 +11,14 @@ export type RedisOptions = {
  * Cycle de vie : initialisation → connexion → CRUD / cache / queue → déconnexion.
  */
 export class RedisClient {
-  readonly host: string;
-  readonly port: number;
+  readonly url: string;
   #connected = false;
   readonly #store = new Map<string, string>();
 
-  constructor(options: RedisOptions = {}) {
-    this.host = options.host ?? "localhost";
-    this.port = options.port ?? 6379;
+  constructor(options: RedisOptions = { url: "" }) {
+    this.url = options.url ?? "";
+
+    this.connect();
   }
 
   /** Indique si le client est connecté. */
@@ -92,5 +91,10 @@ export class RedisClient {
     if (!this.#connected) {
       throw new Error("RedisClient is not connected");
     }
+  }
+
+  /** Indique si le client est sain. */
+  healthy(): boolean {
+    return this.connected ?? false;
   }
 }
