@@ -10,6 +10,8 @@ export {
   defineModel,
   type DefineModelOptions,
   type DefineModelSchema,
+  type FieldType,
+  type InferValues,
   type Model,
   type TValues,
 } from "./model/model.js";

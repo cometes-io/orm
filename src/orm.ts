@@ -33,7 +33,11 @@ export class Orm {
   readonly redis: RedisClient;
   /** Modèles déclarés. */
   readonly models: Model[] = [];
-
+  /** Cache enabled. */
+  cacheEnabled: boolean = false;
+  /** Log enabled. */
+  logEnabled: boolean = false;
+  
   /**
    * Crée une instance ORM.
    *
@@ -84,8 +88,16 @@ export class Orm {
       throw new Error("PostgreSQL database instance not found");
     }
 
-    const model = defineModel<TSchema, PostgresClient>(options, this.postgres);
+    const model = defineModel<TSchema, Orm>(options, this);
     this.models.push(model as unknown as Model);
     return model;
+  }
+
+  cache(value: boolean = true): void {
+    this.cacheEnabled = value;
+  }
+
+  log(value: boolean = true): void {
+    this.logEnabled = value;
   }
 }

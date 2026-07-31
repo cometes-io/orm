@@ -1,6 +1,22 @@
 {
-  "name": "@cometes-io/orm",
+  "name": "@cometes/orm",
   "version": "0.1.0",
+  "author": "Cometes",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cometes-io/orm.git"
+  },
+  "homepage": "https://github.com/cometes-io/orm",
+  "bugs": {
+    "url": "https://github.com/cometes-io/orm/issues"
+  },
+  "keywords": [
+    "orm",
+    "database",
+    "postgres",
+    "redis",
+    "cache"
+  ],
   "description": "ORM pour simplifer et avoir une base de données plus rapide",
   "type": "module",
   "main": "./dist/index.js",
@@ -31,7 +47,7 @@
   "engines": {
     "node": ">=20"
   },
-  "license": "Apache License 2.0",
+  "license": "Apache-2.0",
   "devDependencies": {
     "@types/node": "^22.15.21",
     "tsx": "^4.19.4",
@@ -41,5 +57,10 @@
   "dependencies": {
     "pg": "^8.22.0",
     "sequelize": "^6.37.8"
+  },
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
   }
 }

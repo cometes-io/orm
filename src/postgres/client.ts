@@ -110,11 +110,23 @@ export class PostgresClient {
   getFieldsFromSchema(schema: TValues, attributes: Record<string, any>) {
     const list: Record<string, any> = {};
 
-    for(const [key, value] of Object.entries(schema)) {
-      if(attributes[key]) {
-        list[key] = value;
+      for(const [key, value] of Object.entries(schema)) {
+        if(attributes[key]) {
+          list[key] = value;
+        }
       }
-    }
+
+    return list;
+  }
+
+  getColumnsFromSchema(schema: string[], attributes: Record<string, any>) {
+    const list: string[] = [];
+
+      for(const attribute of schema) {
+        if(attributes[attribute]) {
+          list.push(attribute);
+        }
+      }
 
     return list;
   }

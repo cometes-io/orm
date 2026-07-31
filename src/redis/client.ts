@@ -51,6 +51,21 @@ export class RedisClient {
     return this.#store.get(key) ?? null;
   }
 
+  async del(key: string): Promise<void> {
+    this.#assertConnected();
+    this.#store.delete(key);
+  }
+
+  async delStartWith(key: string): Promise<void> {
+    this.#assertConnected();
+    for(const k of this.#store.keys()) {
+      if(k.startsWith(key)) {
+        this.#store.delete(k);
+      }
+    }
+  }
+
+
   /**
    * Enfile une valeur (queue stub).
    *
