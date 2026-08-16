@@ -1,4 +1,7 @@
+import { Op, type WhereOptions } from "sequelize";
 import { Orm } from "../index.js";
+
+export { Op };
 
 /**
  * Types de champs supportés par le schéma.
@@ -41,6 +44,15 @@ export type InferValues<TSchema extends Record<string, DefineModelSchema>> = {
 };
 
 /**
+ * Clause `where` : égalité sur les champs du schéma, ou opérateurs Sequelize
+ * (`{ [Op.not]: null }`, `{ [Op.gt]: 1 }`, `Op.and` / `Op.or`, …).
+ */
+export type WhereClause<TSchema extends Record<string, DefineModelSchema>> =
+  WhereOptions<{
+    [K in keyof InferValues<TSchema>]: InferValues<TSchema>[K] | null;
+  }>;
+
+/**
  * Options passées à {@link defineModel}.
  */
 export type DefineModelOptions<
@@ -67,11 +79,11 @@ export type Model<
   readonly create: (data: Partial<InferValues<TSchema>>) => Promise<any>;
   readonly findAll: (options?: {
     attributes?: string[];
-    where?: Partial<InferValues<TSchema>>;
+    where?: WhereClause<TSchema>;
   }) => Promise<InferValues<TSchema>[]>;
   readonly findOne: (options?: {
     attributes?: string[];
-    where?: Partial<InferValues<TSchema>>;
+    where?: WhereClause<TSchema>;
   }) => Promise<InferValues<TSchema> | null>;
   readonly updateOne: (
     id: string | number,
@@ -113,7 +125,7 @@ export function defineModel<
 
       return await model.create(ORM.postgres.getFieldsFromSchema(data as TValues, model.getAttributes()), { logging: ORM.logEnabled ? console.log : false });
     },
-    findOne: async ({ attributes, where }: { attributes?: string[], where?: Partial<InferValues<TSchema>> } = {}) => {
+    findOne: async ({ attributes, where }: { attributes?: string[], where?: WhereClause<TSchema> } = {}) => {
       const cacheKey = `model:${options.name}:findOne:${attributes?.join(",") ?? ""}:${JSON.stringify(where)}`;
       
       if (ORM.cacheEnabled && ORM.redis) {
@@ -150,7 +162,7 @@ export function defineModel<
 
       await model.destroy({ where: { id }, logging: ORM.logEnabled ? console.log : false });
     },
-    findAll: async ({ attributes, where }: { attributes?: string[], where?: Partial<InferValues<TSchema>> } = {}) => {
+    findAll: async ({ attributes, where }: { attributes?: string[], where?: WhereClause<TSchema> } = {}) => {
       let disableCache = false;
       if(where) {
         disableCache = true;

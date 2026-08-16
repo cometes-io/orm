@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { Orm } from "../src/index.js";
+import { Op, Orm, type WhereClause } from "../src/index.js";
 
 describe("declareModel", () => {
   let orm: Orm;
@@ -31,5 +31,24 @@ describe("declareModel", () => {
     expect(model.schema.id).toEqual({ type: "number", primary: true });
     expect(model.schema.title).toEqual({ type: "string" });
     expect(orm.models).toContain(model);
+  });
+});
+
+describe("WhereClause", () => {
+  type PostsSchema = {
+    id: { type: "number"; primary: true };
+    title: { type: "string" };
+  };
+
+  it("accepte une égalité et { [Op.not]: null }", () => {
+    const where: WhereClause<PostsSchema> = {
+      id: 1,
+      title: { [Op.not]: null },
+    };
+
+    expect(where).toEqual({
+      id: 1,
+      title: { [Op.not]: null },
+    });
   });
 });

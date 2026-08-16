@@ -8,12 +8,14 @@
 export { Orm, type OrmOptions } from "./orm.js";
 export {
   defineModel,
+  Op,
   type DefineModelOptions,
   type DefineModelSchema,
   type FieldType,
   type InferValues,
   type Model,
   type TValues,
+  type WhereClause,
 } from "./model/model.js";
 export {
   runMigrations,
