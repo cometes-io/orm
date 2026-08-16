@@ -166,7 +166,7 @@ export function defineModel<
       attributes?: AttributeKeys<TSchema>;
       where?: WhereClause<TSchema>;
     } = {}) => {
-      const cacheKey = `model:${options.name}:findOne:${attributes?.join(",") ?? ""}:${JSON.stringify(where)}`;
+      const cacheKey = `model:${options.name}:findOne:${attributes?.join(",") ?? ""}:${JSON.stringify(where)}${where ? `:${JSON.stringify(where)}` : ""}`;
       
       if (ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
@@ -210,11 +210,12 @@ export function defineModel<
       where?: WhereClause<TSchema>;
     } = {}) => {
       let disableCache = false;
-      if(where) {
+      // TODO Supprimer le cache si include ?
+      /*if(where) {
         disableCache = true;
-      }
+      }*/
 
-      const cacheKey = disableCache ? null : `model:${options.name}:findAll:${attributes?.join(",") ?? ""}`;
+      const cacheKey = disableCache ? null : `model:${options.name}:findAll:${attributes?.join(",") ?? ""}${where ? `:${JSON.stringify(where)}` : ""}`;
       
       if (cacheKey && ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
