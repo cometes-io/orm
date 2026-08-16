@@ -175,7 +175,7 @@ git push && git push --tags
 
 Il faut être connecté (`npm login`) et avoir les droits de publication sur l’organisation `@cometes`. Vérifier avec `npm whoami`.
 
-Ou en une ligne de commande  `npm run build && npm version patch && npm publish`
+Ou en une ligne de commande  `npm run build && npm version patch && git push && npm publish`
 
 ## Licence
 
