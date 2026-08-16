@@ -67,6 +67,7 @@ export type Model<
   readonly create: (data: Partial<InferValues<TSchema>>) => Promise<any>;
   readonly findAll: (options?: {
     attributes?: string[];
+    where?: Partial<InferValues<TSchema>>;
   }) => Promise<InferValues<TSchema>[]>;
   readonly findOne: (options?: {
     attributes?: string[];
@@ -122,11 +123,14 @@ export function defineModel<
         }
       }
 
-      const optionsQuery: { attributes?: string[] } = {}
+      const optionsQuery: { attributes?: string[], where?: any } = {}
       if(attributes) {
         optionsQuery.attributes = ORM.postgres.getColumnsFromSchema(attributes, model.getAttributes());
       }
-      
+      if(where) {
+        optionsQuery.where = where;
+      }
+
       const row = await model.findOne({ ...optionsQuery, raw: true, logging: ORM.logEnabled ? console.log : false });
       return row as InferValues<TSchema> | null;
     },
@@ -146,24 +150,32 @@ export function defineModel<
 
       await model.destroy({ where: { id }, logging: ORM.logEnabled ? console.log : false });
     },
-    findAll: async ({ attributes }: { attributes?: string[] } = {}) => {
-      const cacheKey = `model:${options.name}:findAll:${attributes?.join(",") ?? ""}`;
+    findAll: async ({ attributes, where }: { attributes?: string[], where?: Partial<InferValues<TSchema>> } = {}) => {
+      let disableCache = false;
+      if(where) {
+        disableCache = true;
+      }
+
+      const cacheKey = disableCache ? null : `model:${options.name}:findAll:${attributes?.join(",") ?? ""}`;
       
-      if (ORM.cacheEnabled && ORM.redis) {
+      if (cacheKey && ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
         if (cached !== null) {
           return JSON.parse(cached) as InferValues<TSchema>[];
         }
       }
 
-      const optionsQuery: { attributes?: string[] } = {}
+      const optionsQuery: { attributes?: string[], where?: any } = {}
       if(attributes) {
         optionsQuery.attributes = ORM.postgres.getColumnsFromSchema(attributes, model.getAttributes());
+      }
+      if(where) {
+        optionsQuery.where = where;
       }
       
       const rows = await model.findAll({ ...optionsQuery, raw: true, logging: ORM.logEnabled ? console.log : false });
       
-      if (ORM.cacheEnabled && ORM.redis) {
+      if (cacheKey &&ORM.cacheEnabled && ORM.redis) {
         await ORM.redis.set(cacheKey, JSON.stringify(rows));
         // optionnel : TTL → redis.set(cacheKey, ..., { EX: 60 })
       }

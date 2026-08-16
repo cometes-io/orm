@@ -55,9 +55,17 @@ await UserModel.findOne({
 
   console.time("start - findAll");
   for(let i = 0; i < 1; i++) {
-    await UserModel.findAll({
+    const users = await UserModel.findAll({
       attributes: ["id", "name", "age"],
     });
+    console.log('users',users)
+    const users2 = await UserModel.findAll({
+      attributes: ["id", "name", "age"],
+      where: {
+        id: users[0]?.id ?? 0,
+      },
+    });
+    console.log('users2',users2)
   }
   console.timeEnd("start - findAll");
 
