@@ -153,6 +153,28 @@ npm run ci                    # typecheck + tests + build
 
 À chaque push / PR sur `main`, GitHub Actions exécute typecheck, tests et build sur Node 20 et 22 (voir [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
+## Publier une nouvelle version sur npm
+
+Le package publié est [`@cometes/orm`](https://www.npmjs.com/package/@cometes/orm). Seul le dossier `dist/` est envoyé : compiler avant de publier.
+
+```bash
+# 1. Vérifier que tout passe
+npm run ci
+
+# 2. Incrémenter la version — choisir l’une des commandes (commit + tag git)
+npm version patch   # 0.1.1 → 0.1.2  (correctif)
+npm version minor   # 0.1.1 → 0.2.0  (nouvelle fonctionnalité)
+npm version major   # 0.1.1 → 1.0.0  (breaking change)
+
+# 3. Publier (package scoped : accès public)
+npm publish --access public
+
+# 4. Pousser le commit et le tag
+git push && git push --tags
+```
+
+Il faut être connecté (`npm login`) et avoir les droits de publication sur l’organisation `@cometes`. Vérifier avec `npm whoami`.
+
 ## Licence
 
 Apache License 2.0
