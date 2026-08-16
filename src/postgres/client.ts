@@ -102,7 +102,7 @@ export class PostgresClient {
       }
     }
 
-    console.log('formatModelSchema', list);
+    //console.log('formatModelSchema', list);
 
     return list;
   }
