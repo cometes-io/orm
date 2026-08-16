@@ -9,12 +9,14 @@ export { Orm, type OrmOptions } from "./orm.js";
 export {
   defineModel,
   Op,
+  type AttributeKeys,
   type DefineModelOptions,
   type DefineModelSchema,
   type FieldType,
   type InferPartialValues,
   type InferValues,
   type Model,
+  type SelectedValues,
   type TValues,
   type WhereClause,
 } from "./model/model.js";

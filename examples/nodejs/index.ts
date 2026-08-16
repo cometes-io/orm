@@ -34,7 +34,7 @@ const user = await UserModel.findOne({
 })
 
 console.log('user',user)
-if(user?.id != null) {
+if(user) {
   await UserModel.updateOne(user.id, {
     name: "John Doe 1 bis",
   })
@@ -56,11 +56,11 @@ await UserModel.findOne({
   console.time("start - findAll");
   for(let i = 0; i < 1; i++) {
     const users = await UserModel.findAll({
-      attributes: ["id", "name", "age"],
+      attributes: ["id", "name"],
     });
     console.log('users',users)
     const users2 = await UserModel.findAll({
-      attributes: ["id", "name", "age"],
+      attributes: ["id", "name"],
       where: {
         id: users[0]?.id ?? 0,
       },

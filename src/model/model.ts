@@ -44,14 +44,28 @@ export type InferValues<TSchema extends Record<string, DefineModelSchema>> = {
 };
 
 /**
- * Ligne partielle : chaque champ du schéma est facultatif
- * (ex. `findAll` / `findOne` avec `attributes`).
+ * Ligne partielle : chaque champ du schéma est facultatif.
  */
 export type InferPartialValues<
   TSchema extends Record<string, DefineModelSchema>,
 > = {
   [K in keyof TSchema]?: InferFieldValue<TSchema[K]>;
 };
+
+/**
+ * Clés de schéma acceptées par `attributes`.
+ */
+export type AttributeKeys<
+  TSchema extends Record<string, DefineModelSchema>,
+> = readonly (keyof TSchema)[];
+
+/**
+ * Valeurs correspondant aux attributs sélectionnés.
+ */
+export type SelectedValues<
+  TSchema extends Record<string, DefineModelSchema>,
+  TAttributes extends AttributeKeys<TSchema>,
+> = Pick<InferValues<TSchema>, TAttributes[number]>;
 
 /**
  * Clause `where` : égalité sur les champs du schéma, ou opérateurs Sequelize
@@ -78,29 +92,39 @@ export type DefineModelOptions<
 /**
  * Définition de modèle retournée par {@link defineModel}.
  */
-export type Model<
+export interface Model<
   TSchema extends Record<string, DefineModelSchema> = Record<
     string,
     DefineModelSchema
   >,
-> = {
+> {
   readonly name: string;
   readonly schema: TSchema;
   readonly create: (data: Partial<InferValues<TSchema>>) => Promise<any>;
-  readonly findAll: (options?: {
-    attributes?: string[];
+  findAll<const TAttributes extends AttributeKeys<TSchema>>(
+    options: {
+      attributes: TAttributes;
+      where?: WhereClause<TSchema>;
+    },
+  ): Promise<SelectedValues<TSchema, TAttributes>[]>;
+  findAll(options?: {
     where?: WhereClause<TSchema>;
-  }) => Promise<InferPartialValues<TSchema>[]>;
-  readonly findOne: (options?: {
-    attributes?: string[];
+  }): Promise<InferValues<TSchema>[]>;
+  findOne<const TAttributes extends AttributeKeys<TSchema>>(
+    options: {
+      attributes: TAttributes;
+      where?: WhereClause<TSchema>;
+    },
+  ): Promise<SelectedValues<TSchema, TAttributes> | null>;
+  findOne(options?: {
     where?: WhereClause<TSchema>;
-  }) => Promise<InferPartialValues<TSchema> | null>;
+  }): Promise<InferValues<TSchema> | null>;
   readonly updateOne: (
     id: string | number,
     data: Partial<InferValues<TSchema>>,
   ) => Promise<void>;
   readonly deleteOne: (id: string | number) => Promise<void>;
-};
+}
 
 /**
  * Déclare un modèle (table / collection) avec son schéma.
@@ -135,27 +159,33 @@ export function defineModel<
 
       return await model.create(ORM.postgres.getFieldsFromSchema(data as TValues, model.getAttributes()), { logging: ORM.logEnabled ? console.log : false });
     },
-    findOne: async ({ attributes, where }: { attributes?: string[], where?: WhereClause<TSchema> } = {}) => {
+    findOne: (async ({
+      attributes,
+      where,
+    }: {
+      attributes?: AttributeKeys<TSchema>;
+      where?: WhereClause<TSchema>;
+    } = {}) => {
       const cacheKey = `model:${options.name}:findOne:${attributes?.join(",") ?? ""}:${JSON.stringify(where)}`;
       
       if (ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
         if (cached !== null) {
-          return JSON.parse(cached) as InferPartialValues<TSchema>;
+          return JSON.parse(cached) as InferValues<TSchema>;
         }
       }
 
       const optionsQuery: { attributes?: string[], where?: any } = {}
       if(attributes) {
-        optionsQuery.attributes = ORM.postgres.getColumnsFromSchema(attributes, model.getAttributes());
+        optionsQuery.attributes = ORM.postgres.getColumnsFromSchema(attributes as string[], model.getAttributes());
       }
       if(where) {
         optionsQuery.where = where;
       }
 
       const row = await model.findOne({ ...optionsQuery, raw: true, logging: ORM.logEnabled ? console.log : false });
-      return row as InferPartialValues<TSchema> | null;
-    },
+      return row as InferValues<TSchema> | null;
+    }) as Model<TSchema>["findOne"],
     updateOne: async (id: string | number, data: Partial<InferValues<TSchema>>) => {
       // remove CACHE
       if (ORM.cacheEnabled && ORM.redis) {
@@ -172,7 +202,13 @@ export function defineModel<
 
       await model.destroy({ where: { id }, logging: ORM.logEnabled ? console.log : false });
     },
-    findAll: async ({ attributes, where }: { attributes?: string[], where?: WhereClause<TSchema> } = {}) => {
+    findAll: (async ({
+      attributes,
+      where,
+    }: {
+      attributes?: AttributeKeys<TSchema>;
+      where?: WhereClause<TSchema>;
+    } = {}) => {
       let disableCache = false;
       if(where) {
         disableCache = true;
@@ -183,13 +219,13 @@ export function defineModel<
       if (cacheKey && ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
         if (cached !== null) {
-          return JSON.parse(cached) as InferPartialValues<TSchema>[];
+          return JSON.parse(cached) as InferValues<TSchema>[];
         }
       }
 
       const optionsQuery: { attributes?: string[], where?: any } = {}
       if(attributes) {
-        optionsQuery.attributes = ORM.postgres.getColumnsFromSchema(attributes, model.getAttributes());
+        optionsQuery.attributes = ORM.postgres.getColumnsFromSchema(attributes as string[], model.getAttributes());
       }
       if(where) {
         optionsQuery.where = where;
@@ -201,7 +237,7 @@ export function defineModel<
         await ORM.redis.set(cacheKey, JSON.stringify(rows));
         // optionnel : TTL → redis.set(cacheKey, ..., { EX: 60 })
       }
-      return rows as InferPartialValues<TSchema>[];
-    },
+      return rows as InferValues<TSchema>[];
+    }) as Model<TSchema>["findAll"],
   };
 }
