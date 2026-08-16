@@ -12,6 +12,7 @@ export {
   type DefineModelOptions,
   type DefineModelSchema,
   type FieldType,
+  type InferPartialValues,
   type InferValues,
   type Model,
   type TValues,

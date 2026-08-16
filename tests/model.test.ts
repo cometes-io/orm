@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { Op, Orm, type WhereClause } from "../src/index.js";
+import { Op, Orm, type InferPartialValues, type WhereClause } from "../src/index.js";
 
 describe("declareModel", () => {
   let orm: Orm;
@@ -31,6 +31,26 @@ describe("declareModel", () => {
     expect(model.schema.id).toEqual({ type: "number", primary: true });
     expect(model.schema.title).toEqual({ type: "string" });
     expect(orm.models).toContain(model);
+  });
+});
+
+describe("InferPartialValues", () => {
+  type ProductSchema = {
+    id: { type: "number"; primary: true };
+    name: { type: "string" };
+    sku: { type: "string" };
+    available: { type: "boolean" };
+  };
+
+  it("rend chaque champ facultatif", () => {
+    const data: InferPartialValues<ProductSchema> = {};
+    const dataWithSomeFields: InferPartialValues<ProductSchema> = {
+      id: 1,
+      name: "Widget",
+    };
+
+    expect(data).toEqual({});
+    expect(dataWithSomeFields.name).toBe("Widget");
   });
 });
 

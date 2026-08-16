@@ -44,6 +44,16 @@ export type InferValues<TSchema extends Record<string, DefineModelSchema>> = {
 };
 
 /**
+ * Ligne partielle : chaque champ du schéma est facultatif
+ * (ex. `findAll` / `findOne` avec `attributes`).
+ */
+export type InferPartialValues<
+  TSchema extends Record<string, DefineModelSchema>,
+> = {
+  [K in keyof TSchema]?: InferFieldValue<TSchema[K]>;
+};
+
+/**
  * Clause `where` : égalité sur les champs du schéma, ou opérateurs Sequelize
  * (`{ [Op.not]: null }`, `{ [Op.gt]: 1 }`, `Op.and` / `Op.or`, …).
  */
@@ -80,11 +90,11 @@ export type Model<
   readonly findAll: (options?: {
     attributes?: string[];
     where?: WhereClause<TSchema>;
-  }) => Promise<InferValues<TSchema>[]>;
+  }) => Promise<InferPartialValues<TSchema>[]>;
   readonly findOne: (options?: {
     attributes?: string[];
     where?: WhereClause<TSchema>;
-  }) => Promise<InferValues<TSchema> | null>;
+  }) => Promise<InferPartialValues<TSchema> | null>;
   readonly updateOne: (
     id: string | number,
     data: Partial<InferValues<TSchema>>,
@@ -131,7 +141,7 @@ export function defineModel<
       if (ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
         if (cached !== null) {
-          return JSON.parse(cached) as InferValues<TSchema>;
+          return JSON.parse(cached) as InferPartialValues<TSchema>;
         }
       }
 
@@ -144,7 +154,7 @@ export function defineModel<
       }
 
       const row = await model.findOne({ ...optionsQuery, raw: true, logging: ORM.logEnabled ? console.log : false });
-      return row as InferValues<TSchema> | null;
+      return row as InferPartialValues<TSchema> | null;
     },
     updateOne: async (id: string | number, data: Partial<InferValues<TSchema>>) => {
       // remove CACHE
@@ -173,7 +183,7 @@ export function defineModel<
       if (cacheKey && ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
         if (cached !== null) {
-          return JSON.parse(cached) as InferValues<TSchema>[];
+          return JSON.parse(cached) as InferPartialValues<TSchema>[];
         }
       }
 
@@ -191,7 +201,7 @@ export function defineModel<
         await ORM.redis.set(cacheKey, JSON.stringify(rows));
         // optionnel : TTL → redis.set(cacheKey, ..., { EX: 60 })
       }
-      return rows as InferValues<TSchema>[];
+      return rows as InferPartialValues<TSchema>[];
     },
   };
 }

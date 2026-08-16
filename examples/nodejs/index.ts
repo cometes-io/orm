@@ -34,7 +34,7 @@ const user = await UserModel.findOne({
 })
 
 console.log('user',user)
-if(user) {
+if(user?.id != null) {
   await UserModel.updateOne(user.id, {
     name: "John Doe 1 bis",
   })
