@@ -7,6 +7,10 @@ import {
   type Model,
   type WhereClause,
 } from "../src/index.js";
+import {
+  applySoftDeleteDefault,
+  applyUpdatedAt,
+} from "../src/model/model.js";
 
 describe("declareModel", () => {
   let orm: Orm;
@@ -216,5 +220,103 @@ describe("Model.$schema — phantom InferValues", () => {
     expectTypeOf(findOne).returns.toEqualTypeOf<
       Promise<LocationRecord | null>
     >();
+  });
+});
+
+describe("applySoftDeleteDefault", () => {
+  const schema = {
+    id: { type: "number", primary: true },
+    user_id: { type: "number" },
+    deleted_at: { type: "date", nullable: true },
+  } as const;
+
+  const schemaSansSoftDelete = {
+    id: { type: "number", primary: true },
+    title: { type: "string" },
+  } as const;
+
+  it("filtre deleted_at: null quand aucun where n'est fourni", () => {
+    expect(applySoftDeleteDefault(schema)).toEqual({ deleted_at: null });
+  });
+
+  it("complète un where existant sans le réécrire", () => {
+    expect(applySoftDeleteDefault(schema, { id: 1 })).toEqual({
+      deleted_at: null,
+      id: 1,
+    });
+  });
+
+  it("laisse la valeur fournie surcharger le défaut", () => {
+    const where = { deleted_at: { [Op.not]: null } };
+
+    expect(applySoftDeleteDefault(schema, where)).toBe(where);
+  });
+
+  it("retire le filtre quand deleted_at vaut undefined", () => {
+    const where = { id: 1, deleted_at: undefined } as WhereClause<typeof schema>;
+
+    expect(applySoftDeleteDefault(schema, where)).toEqual({ id: 1 });
+  });
+
+  it("préserve les opérateurs de haut niveau en les combinant en AND", () => {
+    const where = { [Op.or]: [{ id: 1 }, { id: 2 }] };
+    const result = applySoftDeleteDefault(schema, where) as Record<
+      string | symbol,
+      unknown
+    >;
+
+    expect(result["deleted_at"]).toBeNull();
+    expect(result[Op.or]).toEqual([{ id: 1 }, { id: 2 }]);
+  });
+
+  it("préfixe un where sous forme de tableau", () => {
+    expect(applySoftDeleteDefault(schema, [{ id: 1 }])).toEqual([
+      { deleted_at: null },
+      { id: 1 },
+    ]);
+  });
+
+  it("ne touche pas aux schémas sans deleted_at", () => {
+    expect(applySoftDeleteDefault(schemaSansSoftDelete)).toBeUndefined();
+    expect(applySoftDeleteDefault(schemaSansSoftDelete, { id: 1 })).toEqual({
+      id: 1,
+    });
+  });
+});
+
+describe("applyUpdatedAt", () => {
+  const schema = {
+    id: { type: "number", primary: true },
+    name: { type: "string" },
+    updated_at: { type: "date" },
+  } as const;
+
+  const schemaSansUpdatedAt = {
+    id: { type: "number", primary: true },
+    name: { type: "string" },
+  } as const;
+
+  it("horodate updated_at à chaque appel", () => {
+    const before = Date.now();
+    const values = applyUpdatedAt(schema, { name: "John" });
+    const after = Date.now();
+
+    expect(values.name).toBe("John");
+    expect(values.updated_at).toBeInstanceOf(Date);
+    expect(values.updated_at!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(values.updated_at!.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it("écrase une valeur fournie par l'appelant", () => {
+    const stale = new Date("2020-01-01T00:00:00.000Z");
+    const values = applyUpdatedAt(schema, { updated_at: stale });
+
+    expect(values.updated_at).not.toEqual(stale);
+  });
+
+  it("ne touche pas aux schémas sans updated_at", () => {
+    const data = { name: "John" };
+
+    expect(applyUpdatedAt(schemaSansUpdatedAt, data)).toBe(data);
   });
 });

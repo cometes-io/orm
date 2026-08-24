@@ -85,6 +85,92 @@ export type WhereClause<TSchema extends Record<string, DefineModelSchema>> =
     [K in keyof InferValues<TSchema>]: InferValues<TSchema>[K] | null;
   }>;
 
+/** Champ de soft delete filtré par défaut dans `findAll` / `findOne`. */
+const SOFT_DELETE_FIELD = "deleted_at";
+
+/** Champ horodaté à chaque `updateOne`. */
+const UPDATED_AT_FIELD = "updated_at";
+
+const isPlainWhereObject = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+const hasSoftDeleteField = (clause: unknown): boolean =>
+  typeof clause === "object" && clause !== null && SOFT_DELETE_FIELD in clause;
+
+/**
+ * Ajoute `deleted_at: null` à la clause `where` quand le schéma possède ce
+ * champ et que l'appelant ne le renseigne pas lui-même.
+ *
+ * Renseigner `deleted_at` surcharge le défaut ; `deleted_at: undefined` retire
+ * le filtre (toutes les lignes, supprimées incluses).
+ *
+ * Interne — exporté pour les tests.
+ */
+export function applySoftDeleteDefault<
+  TSchema extends Record<string, DefineModelSchema>,
+>(
+  schema: TSchema,
+  where?: WhereClause<TSchema>,
+): WhereClause<TSchema> | undefined {
+  if (!(SOFT_DELETE_FIELD in schema)) {
+    return where;
+  }
+
+  const asWhereClause = (clause: unknown) => clause as WhereClause<TSchema>;
+  const defaultClause = { [SOFT_DELETE_FIELD]: null };
+
+  if (where === undefined) {
+    return asWhereClause(defaultClause);
+  }
+
+  if (Array.isArray(where)) {
+    return asWhereClause(
+      where.some(hasSoftDeleteField) ? where : [defaultClause, ...where],
+    );
+  }
+
+  // `literal()`, `fn()`, `where()` … : ne pas les décomposer, les combiner en AND
+  if (!isPlainWhereObject(where)) {
+    return asWhereClause({ [Op.and]: [defaultClause, where] });
+  }
+
+  const clause = where as Record<string | symbol, unknown>;
+
+  if (!hasSoftDeleteField(clause)) {
+    return asWhereClause({ ...defaultClause, ...clause });
+  }
+
+  if (clause[SOFT_DELETE_FIELD] === undefined) {
+    const { [SOFT_DELETE_FIELD]: _unfiltered, ...rest } = clause;
+    return asWhereClause(rest);
+  }
+
+  return where;
+}
+
+/**
+ * Force `updated_at` à l'instant présent quand le schéma possède ce champ.
+ *
+ * Interne — exporté pour les tests.
+ */
+export function applyUpdatedAt<
+  TSchema extends Record<string, DefineModelSchema>,
+>(
+  schema: TSchema,
+  data: Partial<InferValues<TSchema>>,
+): Partial<InferValues<TSchema>> {
+  if (!(UPDATED_AT_FIELD in schema)) {
+    return data;
+  }
+
+  return { ...data, [UPDATED_AT_FIELD]: new Date() };
+}
+
 /**
  * Options passées à {@link defineModel}.
  */
@@ -186,7 +272,8 @@ export function defineModel<
       attributes?: AttributeKeys<TSchema>;
       where?: WhereClause<TSchema>;
     } = {}) => {
-      const cacheKey = `model:${options.name}:findOne:${attributes?.join(",") ?? ""}:${JSON.stringify(where)}${where ? `:${JSON.stringify(where)}` : ""}`;
+      const effectiveWhere = applySoftDeleteDefault(options.schema, where);
+      const cacheKey = `model:${options.name}:findOne:${attributes?.join(",") ?? ""}${effectiveWhere ? `:${JSON.stringify(effectiveWhere)}` : ""}`;
       
       if (ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
@@ -199,8 +286,8 @@ export function defineModel<
       if(attributes) {
         optionsQuery.attributes = ORM.postgres.getColumnsFromSchema(attributes as string[], model.getAttributes());
       }
-      if(where) {
-        optionsQuery.where = where;
+      if(effectiveWhere) {
+        optionsQuery.where = effectiveWhere;
       }
 
       const row = await model.findOne({ ...optionsQuery, raw: true, logging: ORM.logEnabled ? console.log : false });
@@ -212,7 +299,9 @@ export function defineModel<
         await ORM.redis.delStartWith(`model:${options.name}:findOne`);
       }
 
-      await model.update(ORM.postgres.getFieldsFromSchema(data as TValues, model.getAttributes()), { where: { id }, logging: ORM.logEnabled ? console.log : false });
+      const values = applyUpdatedAt(options.schema, data);
+
+      await model.update(ORM.postgres.getFieldsFromSchema(values as TValues, model.getAttributes()), { where: { id }, logging: ORM.logEnabled ? console.log : false });
     },
     deleteOne: async (id: string | number) => {
       // remove CACHE
@@ -235,7 +324,8 @@ export function defineModel<
         disableCache = true;
       }*/
 
-      const cacheKey = disableCache ? null : `model:${options.name}:findAll:${attributes?.join(",") ?? ""}${where ? `:${JSON.stringify(where)}` : ""}`;
+      const effectiveWhere = applySoftDeleteDefault(options.schema, where);
+      const cacheKey = disableCache ? null : `model:${options.name}:findAll:${attributes?.join(",") ?? ""}${effectiveWhere ? `:${JSON.stringify(effectiveWhere)}` : ""}`;
       
       if (cacheKey && ORM.cacheEnabled && ORM.redis) {
         const cached = await ORM.redis.get(cacheKey);
@@ -248,8 +338,8 @@ export function defineModel<
       if(attributes) {
         optionsQuery.attributes = ORM.postgres.getColumnsFromSchema(attributes as string[], model.getAttributes());
       }
-      if(where) {
-        optionsQuery.where = where;
+      if(effectiveWhere) {
+        optionsQuery.where = effectiveWhere;
       }
       
       const rows = await model.findAll({ ...optionsQuery, raw: true, logging: ORM.logEnabled ? console.log : false });
