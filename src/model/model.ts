@@ -88,6 +88,9 @@ export type WhereClause<TSchema extends Record<string, DefineModelSchema>> =
 /** Champ de soft delete filtré par défaut dans `findAll` / `findOne`. */
 const SOFT_DELETE_FIELD = "deleted_at";
 
+/** Champ horodaté à la création. */
+const CREATED_AT_FIELD = "created_at";
+
 /** Champ horodaté à chaque `updateOne`. */
 const UPDATED_AT_FIELD = "updated_at";
 
@@ -169,6 +172,44 @@ export function applyUpdatedAt<
   }
 
   return { ...data, [UPDATED_AT_FIELD]: new Date() };
+}
+
+const isProvided = (data: object, field: string): boolean =>
+  field in data && (data as Record<string, unknown>)[field] !== undefined;
+
+/**
+ * Remplit `created_at` / `updated_at` avec `new Date()` à l'INSERT quand le
+ * schéma les possède et que l'appelant ne les fournit pas.
+ *
+ * Une valeur fournie n'est pas écrasée. `deleted_at` n'est pas touché.
+ *
+ * Interne — exporté pour les tests.
+ */
+export function applyCreateTimestamps<
+  TSchema extends Record<string, DefineModelSchema>,
+>(
+  schema: TSchema,
+  data: Partial<InferValues<TSchema>>,
+): Partial<InferValues<TSchema>> {
+  const now = new Date();
+  const hasCreatedAt = CREATED_AT_FIELD in schema;
+  const hasUpdatedAt = UPDATED_AT_FIELD in schema;
+
+  if (!hasCreatedAt && !hasUpdatedAt) {
+    return data;
+  }
+
+  const values: Partial<InferValues<TSchema>> = { ...data };
+
+  if (hasCreatedAt && !isProvided(data, CREATED_AT_FIELD)) {
+    (values as Record<string, unknown>)[CREATED_AT_FIELD] = now;
+  }
+
+  if (hasUpdatedAt && !isProvided(data, UPDATED_AT_FIELD)) {
+    (values as Record<string, unknown>)[UPDATED_AT_FIELD] = now;
+  }
+
+  return values;
 }
 
 /**
@@ -263,7 +304,9 @@ export function defineModel<
         await ORM.redis.delStartWith(`model:${options.name}:findAll`);
       }
 
-      return await model.create(ORM.postgres.getFieldsFromSchema(data as TValues, model.getAttributes()), { logging: ORM.logEnabled ? console.log : false });
+      const values = applyCreateTimestamps(options.schema, data);
+
+      return await model.create(ORM.postgres.getFieldsFromSchema(values as TValues, model.getAttributes()), { logging: ORM.logEnabled ? console.log : false });
     },
     findOne: (async ({
       attributes,

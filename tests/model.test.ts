@@ -8,6 +8,7 @@ import {
   type WhereClause,
 } from "../src/index.js";
 import {
+  applyCreateTimestamps,
   applySoftDeleteDefault,
   applyUpdatedAt,
 } from "../src/model/model.js";
@@ -318,5 +319,64 @@ describe("applyUpdatedAt", () => {
     const data = { name: "John" };
 
     expect(applyUpdatedAt(schemaSansUpdatedAt, data)).toBe(data);
+  });
+});
+
+describe("applyCreateTimestamps", () => {
+  const schema = {
+    id: { type: "number", primary: true },
+    user_id: { type: "number" },
+    created_at: { type: "date" },
+    updated_at: { type: "date" },
+    deleted_at: { type: "date", nullable: true },
+  } as const;
+
+  const schemaSansTimestamps = {
+    id: { type: "number", primary: true },
+    name: { type: "string" },
+  } as const;
+
+  it("remplit created_at et updated_at si absents", () => {
+    const before = Date.now();
+    const values = applyCreateTimestamps(schema, { user_id: 1 });
+    const after = Date.now();
+
+    expect(values.user_id).toBe(1);
+    expect(values.created_at).toBeInstanceOf(Date);
+    expect(values.updated_at).toBeInstanceOf(Date);
+    expect(values.created_at!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(values.created_at!.getTime()).toBeLessThanOrEqual(after);
+    expect(values.updated_at).toEqual(values.created_at);
+    expect(values).not.toHaveProperty("deleted_at");
+  });
+
+  it("conserve les valeurs fournies par l'appelant", () => {
+    const createdAt = new Date("2020-01-01T00:00:00.000Z");
+    const updatedAt = new Date("2020-06-01T00:00:00.000Z");
+    const values = applyCreateTimestamps(schema, {
+      user_id: 1,
+      created_at: createdAt,
+      updated_at: updatedAt,
+    });
+
+    expect(values.created_at).toBe(createdAt);
+    expect(values.updated_at).toBe(updatedAt);
+  });
+
+  it("remplit seulement le champ manquant", () => {
+    const createdAt = new Date("2020-01-01T00:00:00.000Z");
+    const values = applyCreateTimestamps(schema, {
+      user_id: 1,
+      created_at: createdAt,
+    });
+
+    expect(values.created_at).toBe(createdAt);
+    expect(values.updated_at).toBeInstanceOf(Date);
+  });
+
+  it("ne touche pas aux schémas sans created_at / updated_at", () => {
+    const data = { name: "John" };
+
+    expect(applyCreateTimestamps(schemaSansTimestamps, data)).toBe(data);
   });
 });
