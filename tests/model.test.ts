@@ -37,6 +37,7 @@ describe("declareModel", () => {
     expect(model.name).toBe("posts");
     expect(model.schema.id).toEqual({ type: "number", primary: true });
     expect(model.schema.title).toEqual({ type: "string" });
+    expect(model.$schema).toBeUndefined();
     expect(orm.models).toContain(model);
   });
 });
@@ -159,5 +160,61 @@ describe("Model.findAll / findOne — inférence depuis attributes", () => {
       });
 
     expect(typeof invalidWhere).toBe("function");
+  });
+});
+
+describe("Model.$schema — phantom InferValues", () => {
+  type LocationSchema = {
+    id: { type: "number"; primary: true };
+    name: { type: "string" };
+    lat: { type: "float" };
+    active: { type: "boolean" };
+    created_at: { type: "date" };
+    deleted_at: { type: "date"; nullable: true };
+  };
+
+  type LocationModel = Model<LocationSchema>;
+
+  it("typeof Model.$schema colle 1:1 au schéma inféré", () => {
+    const recordOf = (model: LocationModel) =>
+      null as unknown as typeof model.$schema;
+
+    expectTypeOf(recordOf).returns.toEqualTypeOf<{
+      id: number;
+      name: string;
+      lat: number;
+      active: boolean;
+      created_at: Date;
+      deleted_at: Date | null;
+    }>();
+    expectTypeOf<LocationModel["$schema"]>().toEqualTypeOf<
+      InferValues<LocationSchema>
+    >();
+  });
+
+  it("nullable: true infère T | null, sinon T", () => {
+    expectTypeOf<LocationModel["$schema"]["deleted_at"]>().toEqualTypeOf<
+      Date | null
+    >();
+    expectTypeOf<LocationModel["$schema"]["created_at"]>().toEqualTypeOf<Date>();
+    expectTypeOf<LocationModel["$schema"]["id"]>().not.toEqualTypeOf<
+      number | null
+    >();
+  });
+
+  it("create / findOne / findAll restent alignés sur Model.$schema", () => {
+    type LocationRecord = LocationModel["$schema"];
+
+    expectTypeOf<Parameters<LocationModel["create"]>[0]>().toEqualTypeOf<
+      Partial<LocationRecord>
+    >();
+
+    const findAll = (model: LocationModel) => model.findAll();
+    expectTypeOf(findAll).returns.toEqualTypeOf<Promise<LocationRecord[]>>();
+
+    const findOne = (model: LocationModel) => model.findOne();
+    expectTypeOf(findOne).returns.toEqualTypeOf<
+      Promise<LocationRecord | null>
+    >();
   });
 });

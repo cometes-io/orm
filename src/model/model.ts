@@ -14,6 +14,8 @@ export type FieldType = "string" | "number" | "boolean" | "float" | "date";
 export type DefineModelSchema = {
   type: FieldType;
   primary?: boolean;
+  /** Si `true`, la valeur inférée est `T | null`. */
+  nullable?: true;
 };
 
 /**
@@ -24,9 +26,9 @@ export type DefineModelValue = string | number | boolean | Date;
 export type TValues = Record<string, DefineModelValue>;
 
 /**
- * Valeur TypeScript dérivée du descripteur de champ.
+ * Valeur TypeScript dérivée du type de champ (sans nullabilité).
  */
-type InferFieldValue<T extends DefineModelSchema> = T["type"] extends
+type InferFieldBase<T extends DefineModelSchema> = T["type"] extends
   | "number"
   | "float"
   ? number
@@ -35,6 +37,15 @@ type InferFieldValue<T extends DefineModelSchema> = T["type"] extends
     : T["type"] extends "date"
       ? Date
       : string;
+
+/**
+ * Valeur TypeScript dérivée du descripteur de champ.
+ */
+type InferFieldValue<T extends DefineModelSchema> = T extends {
+  nullable: true;
+}
+  ? InferFieldBase<T> | null
+  : InferFieldBase<T>;
 
 /**
  * Ligne de données dérivée du schéma (valeurs, pas descripteurs).
@@ -48,9 +59,7 @@ export type InferValues<TSchema extends Record<string, DefineModelSchema>> = {
  */
 export type InferPartialValues<
   TSchema extends Record<string, DefineModelSchema>,
-> = {
-  [K in keyof TSchema]?: InferFieldValue<TSchema[K]>;
-};
+> = Partial<InferValues<TSchema>>;
 
 /**
  * Clés de schéma acceptées par `attributes`.
@@ -100,6 +109,16 @@ export interface Model<
 > {
   readonly name: string;
   readonly schema: TSchema;
+  /**
+   * Ligne inférée du schéma (`InferValues<TSchema>`).
+   * Phantom TypeScript : ne pas lire à runtime.
+   *
+   * @example
+   * ```ts
+   * type LocationRecord = typeof LocationModel.$schema;
+   * ```
+   */
+  readonly $schema: InferValues<TSchema>;
   readonly create: (data: Partial<InferValues<TSchema>>) => Promise<any>;
   findAll<const TAttributes extends AttributeKeys<TSchema>>(
     options: {
@@ -151,6 +170,7 @@ export function defineModel<
   return {
     name: options.name,
     schema: options.schema,
+    $schema: undefined as unknown as InferValues<TSchema>,
     create: async (data: Partial<InferValues<TSchema>>) => {
       // remove CACHE
       if (ORM.cacheEnabled && ORM.redis) {
