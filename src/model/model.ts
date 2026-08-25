@@ -246,7 +246,7 @@ export interface Model<
    * ```
    */
   readonly $schema: InferValues<TSchema>;
-  readonly create: (data: Partial<InferValues<TSchema>>) => Promise<any>;
+  readonly create: (data: Partial<InferValues<TSchema>>) => Promise<InferValues<TSchema>>;
   findAll<const TAttributes extends AttributeKeys<TSchema>>(
     options: {
       attributes: TAttributes;
@@ -306,7 +306,8 @@ export function defineModel<
 
       const values = applyCreateTimestamps(options.schema, data);
 
-      return await model.create(ORM.postgres.getFieldsFromSchema(values as TValues, model.getAttributes()), { logging: ORM.logEnabled ? console.log : false });
+      const created = await model.create(ORM.postgres.getFieldsFromSchema(values as TValues, model.getAttributes()), { logging: ORM.logEnabled ? console.log : false });
+      return created.get() as InferValues<TSchema>;
     },
     findOne: (async ({
       attributes,

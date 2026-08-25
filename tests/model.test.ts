@@ -380,3 +380,107 @@ describe("applyCreateTimestamps", () => {
     expect(applyCreateTimestamps(schemaSansTimestamps, data)).toBe(data);
   });
 });
+
+describe("Model.create — timestamps envoyés à l'INSERT", () => {
+  let orm: Orm;
+
+  afterEach(async () => {
+    if (orm) {
+      await orm.disconnect().catch(() => undefined);
+    }
+  });
+
+  /** Remplace `define()` pour capturer les valeurs envoyées à Sequelize. */
+  const declareCapturingModel = (columns: string[]) => {
+    orm = new Orm({
+      postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+      redis: { url: "redis://localhost:6379" },
+    });
+
+    const inserted: Record<string, unknown>[] = [];
+    const attributes = Object.fromEntries(
+      columns.map((column) => [column, {}]),
+    );
+
+    orm.postgres.dbInstance!.define = (() => ({
+      create: async (values: Record<string, unknown>) => {
+        inserted.push(values);
+        return values;
+      },
+      getAttributes: () => attributes,
+    })) as never;
+
+    return { inserted };
+  };
+
+  it("insère created_at et updated_at non nuls sans que l'appelant les passe", async () => {
+    const { inserted } = declareCapturingModel([
+      "id",
+      "user_id",
+      "latitude",
+      "longitude",
+      "created_at",
+      "updated_at",
+      "deleted_at",
+    ]);
+
+    const LocationModel = orm.declareModel({
+      name: "locations",
+      schema: {
+        id: { type: "number", primary: true },
+        user_id: { type: "number" },
+        latitude: { type: "float" },
+        longitude: { type: "float" },
+        created_at: { type: "date" },
+        updated_at: { type: "date" },
+        deleted_at: { type: "date", nullable: true },
+      },
+    });
+
+    await LocationModel.create({ user_id: 1, latitude: 1.5, longitude: 1.5 });
+
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]!["created_at"]).toBeInstanceOf(Date);
+    expect(inserted[0]!["updated_at"]).toBeInstanceOf(Date);
+    expect(inserted[0]).not.toHaveProperty("deleted_at");
+  });
+
+  it("conserve un created_at fourni par l'appelant", async () => {
+    const { inserted } = declareCapturingModel([
+      "id",
+      "created_at",
+      "updated_at",
+    ]);
+
+    const LocationModel = orm.declareModel({
+      name: "locations",
+      schema: {
+        id: { type: "number", primary: true },
+        created_at: { type: "date" },
+        updated_at: { type: "date" },
+      },
+    });
+
+    const createdAt = new Date("2020-01-01T00:00:00.000Z");
+    await LocationModel.create({ created_at: createdAt });
+
+    expect(inserted[0]!["created_at"]).toBe(createdAt);
+    expect(inserted[0]!["updated_at"]).toBeInstanceOf(Date);
+  });
+
+  it("laisse l'INSERT inchangé sur un schéma sans timestamps", async () => {
+    const { inserted } = declareCapturingModel(["id", "title"]);
+
+    const PostModel = orm.declareModel({
+      name: "posts",
+      schema: {
+        id: { type: "number", primary: true },
+        title: { type: "string" },
+      },
+    });
+
+    await PostModel.create({ title: "Hello" });
+
+    expect(inserted[0]).toEqual({ title: "Hello" });
+  });
+});
