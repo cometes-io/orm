@@ -95,10 +95,17 @@ export class PostgresClient {
     }
 
     for(const [key, value] of Object.entries(schema)) {
+      const enumValues = value.enum;
+      const sequelizeType =
+        value.type === "string" && enumValues && enumValues.length > 0
+          ? DataTypes.ENUM(...(enumValues.map(String) as [string, ...string[]]))
+          : getType(value.type);
+
       list[key] = {
-        type: getType(value.type),
+        type: sequelizeType,
         primaryKey: value.primary ?? false,
         autoIncrement: value.primary ?? false,
+        ...(value.default !== undefined ? { defaultValue: value.default } : {}),
       }
     }
 

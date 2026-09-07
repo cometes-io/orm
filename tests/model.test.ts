@@ -67,6 +67,53 @@ describe("InferPartialValues", () => {
   });
 });
 
+describe("enum / default", () => {
+  type StatusSchema = {
+    id: { type: "number"; primary: true };
+    status: {
+      type: "string";
+      enum: ["active", "inactive", "archived"];
+      default: "active";
+    };
+    deleted_at: { type: "date"; nullable: true };
+  };
+
+  it("infère l'union des littéraux enum", () => {
+    expectTypeOf<InferValues<StatusSchema>["status"]>().toEqualTypeOf<
+      "active" | "inactive" | "archived"
+    >();
+  });
+
+  it("enum + nullable infère l'union | null", () => {
+    type NullableStatusSchema = {
+      status: {
+        type: "string";
+        enum: ["active", "inactive"];
+        nullable: true;
+      };
+    };
+
+    expectTypeOf<InferValues<NullableStatusSchema>["status"]>().toEqualTypeOf<
+      "active" | "inactive" | null
+    >();
+  });
+
+  it("accepte enum et default sur le descripteur", () => {
+    const schema: StatusSchema = {
+      id: { type: "number", primary: true },
+      status: {
+        type: "string",
+        enum: ["active", "inactive", "archived"],
+        default: "active",
+      },
+      deleted_at: { type: "date", nullable: true },
+    };
+
+    expect(schema.status.enum).toEqual(["active", "inactive", "archived"]);
+    expect(schema.status.default).toBe("active");
+  });
+});
+
 describe("WhereClause", () => {
   type PostsSchema = {
     id: { type: "number"; primary: true };
@@ -405,7 +452,7 @@ describe("Model.create — timestamps envoyés à l'INSERT", () => {
     orm.postgres.dbInstance!.define = (() => ({
       create: async (values: Record<string, unknown>) => {
         inserted.push(values);
-        return values;
+        return { get: () => values };
       },
       getAttributes: () => attributes,
     })) as never;

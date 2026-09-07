@@ -16,6 +16,10 @@ export type DefineModelSchema = {
   primary?: boolean;
   /** Si `true`, la valeur inférée est `T | null`. */
   nullable?: true;
+  /** Restreint la valeur inférée à ces littéraux (ex. `"active" | "inactive"`). */
+  enum?: readonly (string | number)[];
+  /** Valeur par défaut Sequelize / TypeScript (`default: "active"`). */
+  default?: DefineModelValue | null;
 };
 
 /**
@@ -26,9 +30,9 @@ export type DefineModelValue = string | number | boolean | Date;
 export type TValues = Record<string, DefineModelValue>;
 
 /**
- * Valeur TypeScript dérivée du type de champ (sans nullabilité).
+ * Valeur TypeScript dérivée du type de champ (sans enum ni nullabilité).
  */
-type InferFieldBase<T extends DefineModelSchema> = T["type"] extends
+type InferFieldFromType<T extends DefineModelSchema> = T["type"] extends
   | "number"
   | "float"
   ? number
@@ -37,6 +41,15 @@ type InferFieldBase<T extends DefineModelSchema> = T["type"] extends
     : T["type"] extends "date"
       ? Date
       : string;
+
+/**
+ * Valeur TypeScript dérivée du type de champ (sans nullabilité).
+ */
+type InferFieldBase<T extends DefineModelSchema> = T extends {
+  enum: readonly (infer E)[];
+}
+  ? E
+  : InferFieldFromType<T>;
 
 /**
  * Valeur TypeScript dérivée du descripteur de champ.
@@ -287,7 +300,7 @@ export interface Model<
  * ```
  */
 export function defineModel<
-  TSchema extends Record<string, DefineModelSchema>, TORM extends Orm
+  const TSchema extends Record<string, DefineModelSchema>, TORM extends Orm
 >(options: DefineModelOptions<TSchema>, ORM: TORM): Model<TSchema> {
   const model = ORM.postgres.dbInstance!.define(options.name, ORM.postgres.formatModelSchema(options.schema), {
     createdAt: false,

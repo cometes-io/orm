@@ -35,4 +35,44 @@ describe("PostgresClient", () => {
     await client.disconnect();
     expect(client.connected).toBe(false);
   });
+
+  it("mappe enum et default vers Sequelize", () => {
+    const formatted = client.formatModelSchema({
+      status: {
+        type: "string",
+        enum: ["active", "inactive", "archived"],
+        default: "active",
+      },
+    });
+
+    expect(formatted["status"]?.defaultValue).toBe("active");
+    expect(formatted["status"]?.type.key).toBe("ENUM");
+    expect(formatted["status"]?.type.values).toEqual([
+      "active",
+      "inactive",
+      "archived",
+    ]);
+  });
+
+  it("envoie le default à l'INSERT quand le champ n'est pas fourni", () => {
+    const model = client.dbInstance!.define(
+      "things",
+      client.formatModelSchema({
+        id: { type: "number", primary: true },
+        name: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["active", "inactive"],
+          default: "active",
+        },
+      }),
+      { createdAt: false, updatedAt: false, deletedAt: false },
+    );
+
+    // `build` reproduit les valeurs que `create` enverra à Postgres
+    expect(model.build({ name: "Widget" }).get("status")).toBe("active");
+    expect(model.build({ name: "Widget", status: "inactive" }).get("status")).toBe(
+      "inactive",
+    );
+  });
 });

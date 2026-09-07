@@ -81,7 +81,7 @@ export class Orm {
   }
 
   /** Déclare un modèle (table / collection) avec son schéma. */
-  declareModel<TSchema extends Record<string, DefineModelSchema>>(
+  declareModel<const TSchema extends Record<string, DefineModelSchema>>(
     options: DefineModelOptions<TSchema>,
   ): Model<TSchema> {
     if (!this.postgres.dbInstance) {
