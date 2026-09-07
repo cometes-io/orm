@@ -1,5 +1,7 @@
+import { Op } from "../../src/index.js";
 import { orm } from "./db.js";
 import { UserModel } from "./models/users.js";
+import { WorkspaceUserModel } from "./models/workspace-users.js";
 
 console.log(await orm.ping());
 console.log(
@@ -14,68 +16,70 @@ const startTest = async (cache: boolean = false) => {
   orm.cache(cache);
   orm.log(false);
 
-  //console.log(UserModel)
-  //console.log(orm.models)
+  const existing = await UserModel.findOne({
+    attributes: ["id", "name", "status"] as const,
+    where: { id: 1 },
+  });
 
-  /*console.time("start - create");
-  for(let i = 0; i < 1000; i++) {
-    await UserModel.create({
-      name: `John Doe ${i}`,
-      age: 30, // not in schema -> not added to the query
+  console.log("user", existing);
+
+  let userId: number;
+  if (existing) {
+    await UserModel.updateOne(existing.id, {
+      name: "John Doe 1 bis",
     });
+    userId = existing.id;
+  } else {
+    // created_at / updated_at / status (default: "active") sont remplis par l'ORM
+    const created = await UserModel.create({
+      id: 1,
+      name: "John Doe 1",
+    });
+    console.log("created", created);
+    userId = created.id;
   }
-  console.timeEnd("start - create");*/
 
-const user = await UserModel.findOne({
-  attributes: ["id", "name"],
-  where: {
-    id: 1,
-  },
-})
+  const activeUsers = await UserModel.findAll({
+    attributes: ["id", "name", "status"] as const,
+    where: {
+      status: { [Op.in]: ["active", "inactive"] },
+    },
+  });
+  console.log("activeUsers", activeUsers);
 
-console.log('user',user)
-if(user) {
-  await UserModel.updateOne(user.id, {
-    name: "John Doe 1 bis",
-  })
-} else {
-  await UserModel.create({
-    id: 1,
-    name: "John Doe 1",
-  })
-}
+  await WorkspaceUserModel.delete({
+    where: { workspace_id: 1, user_id: userId, deleted_at: undefined },
+  });
 
-await UserModel.findOne({
-  where: {
-    id: 1,
-  },
-})
+  const membership = await WorkspaceUserModel.create({
+    workspace_id: 1,
+    user_id: userId,
+  });
+  console.log("membership", membership);
 
-  await UserModel.deleteOne(1)
+  await WorkspaceUserModel.update(
+    { role: "admin" },
+    { where: { workspace_id: 1, user_id: userId } },
+  );
 
-  console.time("start - findAll");
-  for(let i = 0; i < 1; i++) {
-    const users = await UserModel.findAll({
-      attributes: ["id", "name"],
-    });
-    console.log('users',users)
-    const users2 = await UserModel.findAll({
-      attributes: ["id", "name"],
-      where: {
-        id: users[0]?.id ?? 0,
-      },
-    });
-    console.log('users2',users2)
-  }
-  console.timeEnd("start - findAll");
+  const adminMembership = await WorkspaceUserModel.findOne({
+    attributes: ["workspace_id", "user_id", "role"] as const,
+    where: { workspace_id: 1, user_id: userId },
+  });
+  console.log("adminMembership", adminMembership);
+
+  await WorkspaceUserModel.delete({
+    where: { workspace_id: 1, user_id: userId },
+  });
+
+  await UserModel.deleteOne(userId);
 
   console.timeEnd("start - test - cache: " + cache);
-}
+};
 
 await startTest();
 await startTest(true);
 
-// Garde le process vivant dans Docker Compose
 if (process.env.KEEP_ALIVE === "1") {
   setInterval(() => {}, 1 << 30);
 } else {

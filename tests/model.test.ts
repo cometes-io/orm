@@ -531,3 +531,139 @@ describe("Model.create — timestamps envoyés à l'INSERT", () => {
     expect(inserted[0]).toEqual({ title: "Hello" });
   });
 });
+
+describe("Model.update / Model.delete — where", () => {
+  type WorkspaceUserSchema = {
+    workspace_id: { type: "number" };
+    user_id: { type: "number" };
+    role: { type: "string" };
+    deleted_at: { type: "date"; nullable: true };
+    updated_at: { type: "date" };
+  };
+
+  type WorkspaceUserModel = Model<WorkspaceUserSchema>;
+
+  it("typage : update(data, { where }) et delete({ where })", () => {
+    const update = (model: WorkspaceUserModel, role: string) =>
+      model.update(
+        { role },
+        { where: { workspace_id: 1, user_id: 2 } },
+      );
+    const remove = (model: WorkspaceUserModel) =>
+      model.delete({ where: { workspace_id: 1, user_id: 2 } });
+
+    expectTypeOf(update).returns.toEqualTypeOf<Promise<void>>();
+    expectTypeOf(remove).returns.toEqualTypeOf<Promise<void>>();
+  });
+
+  it("refuse un champ where hors schéma", () => {
+    const update = (model: WorkspaceUserModel) =>
+      model.update(
+        { role: "admin" },
+        {
+          where: {
+            // @ts-expect-error — "missing" n'est pas un champ du schéma
+            missing: 1,
+          },
+        },
+      );
+    const remove = (model: WorkspaceUserModel) =>
+      // @ts-expect-error — where est obligatoire
+      model.delete();
+
+    expect(typeof update).toBe("function");
+    expect(typeof remove).toBe("function");
+  });
+
+  let orm: Orm;
+
+  afterEach(async () => {
+    if (orm) {
+      await orm.disconnect().catch(() => undefined);
+    }
+  });
+
+  const declareCapturingModel = () => {
+    orm = new Orm({
+      postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+      redis: { url: "redis://localhost:6379" },
+    });
+
+    const updates: { values: Record<string, unknown>; where: unknown }[] = [];
+    const destroys: { where: unknown }[] = [];
+    const attributes = {
+      workspace_id: {},
+      user_id: {},
+      role: {},
+      deleted_at: {},
+      updated_at: {},
+    };
+
+    orm.postgres.dbInstance!.define = (() => ({
+      update: async (values: Record<string, unknown>, opts: { where: unknown }) => {
+        updates.push({ values, where: opts.where });
+      },
+      destroy: async (opts: { where: unknown }) => {
+        destroys.push({ where: opts.where });
+      },
+      getAttributes: () => attributes,
+    })) as never;
+
+    return { updates, destroys };
+  };
+
+  it("update envoie data + where (deleted_at: null par défaut, updated_at now)", async () => {
+    const { updates } = declareCapturingModel();
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: { type: "number" },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await WorkspaceUserModel.update(
+      { role: "admin" },
+      { where: { workspace_id: 10, user_id: 20 } },
+    );
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.values["role"]).toBe("admin");
+    expect(updates[0]!.values["updated_at"]).toBeInstanceOf(Date);
+    expect(updates[0]!.where).toEqual({
+      deleted_at: null,
+      workspace_id: 10,
+      user_id: 20,
+    });
+  });
+
+  it("delete applique le where et le défaut deleted_at: null", async () => {
+    const { destroys } = declareCapturingModel();
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: { type: "number" },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await WorkspaceUserModel.delete({
+      where: { workspace_id: 10, user_id: 20 },
+    });
+
+    expect(destroys).toHaveLength(1);
+    expect(destroys[0]!.where).toEqual({
+      deleted_at: null,
+      workspace_id: 10,
+      user_id: 20,
+    });
+  });
+});

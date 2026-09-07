@@ -5,10 +5,7 @@ import {
 } from "sequelize";
 
 /**
- * Crée la table users (alignée sur examples/nodejs/models/users.ts).
- *
- * `autoIncrement: true` → SERIAL / IDENTITY côté PostgreSQL
- * (pas AUTO_INCREMENT, qui est une syntaxe MySQL).
+ * Table de liaison workspace ↔ user (update / delete par `where`).
  */
 export async function up(
   queryInterface: QueryInterface,
@@ -16,22 +13,20 @@ export async function up(
   transaction: Transaction,
 ): Promise<void> {
   await queryInterface.createTable(
-    "users",
+    "workspace_users",
     {
-      id: {
+      workspace_id: {
         type: DataTypes.INTEGER,
-        primaryKey: true,
-        autoIncrement: true,
         allowNull: false,
       },
-      name: {
-        type: DataTypes.TEXT,
+      user_id: {
+        type: DataTypes.INTEGER,
         allowNull: false,
       },
-      status: {
+      role: {
         type: DataTypes.TEXT,
         allowNull: false,
-        defaultValue: "active",
+        defaultValue: "member",
       },
       created_at: {
         type: DataTypes.DATE,
@@ -55,5 +50,5 @@ export async function down(
   _Sequelize: unknown,
   transaction: Transaction,
 ): Promise<void> {
-  await queryInterface.dropTable("users", { transaction });
+  await queryInterface.dropTable("workspace_users", { transaction });
 }

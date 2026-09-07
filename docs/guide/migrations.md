@@ -15,6 +15,8 @@ Avec Sequelize, on écrit `autoIncrement: true` : le dialecte Postgres génère 
 3. Chaque fichier exporte `up(queryInterface, Sequelize, transaction)`
 4. Table `migrations` : mémorise les fichiers déjà appliqués
 
+L’exemple Node.js contient `001_create_users.ts` et `002_create_workspace_users.ts` (timestamps `created_at` / `updated_at` / `deleted_at`, défauts `status` / `role`).
+
 ## Exemple
 
 ```ts

@@ -48,7 +48,16 @@ export const UserModel = orm.declareModel({
 });
 ```
 
-Types de champs supportés : `string`, `number`, `boolean`, `float`, `date`.
+Types de champs supportés : `string`, `number`, `boolean`, `float`, `date`.  
+Options de champ : `primary`, `nullable`, `enum`, `default`.
+
+La ligne inférée se récupère sans `InferValues<typeof schema>` :
+
+```ts
+type UserRecord = typeof UserModel.$schema;
+```
+
+Voir [docs/README.md](docs/README.md) pour `$schema`, opérateurs `Op`, timestamps et `update` / `delete` par `where`.
 
 ### 3. Migrations
 
@@ -107,13 +116,15 @@ await orm.disconnect();
 
 | Méthode | Signature | Description |
 |---------|-----------|-------------|
-| `create` | `(data) => Promise` | Insert. Seuls les champs du schéma sont envoyés. |
+| `create` | `(data) => Promise<row>` | Insert. Seuls les champs du schéma sont envoyés. |
 | `findOne` | `({ attributes?, where? }) => Promise<row \| null>` | Première ligne correspondante. |
-| `findAll` | `({ attributes? }) => Promise<row[]>` | Toutes les lignes. |
+| `findAll` | `({ attributes?, where? }) => Promise<row[]>` | Lignes correspondantes. |
 | `updateOne` | `(id, data) => Promise<void>` | Update par clé primaire. |
+| `update` | `(data, { where }) => Promise<void>` | Update par `where`. |
 | `deleteOne` | `(id) => Promise<void>` | Delete par clé primaire. |
+| `delete` | `({ where }) => Promise<void>` | Delete par `where`. |
 
-Avec le cache activé (`orm.cache(true)`), `findOne` / `findAll` passent par Redis ; `create` / `updateOne` / `deleteOne` invalident les clés concernées.
+Avec le cache activé (`orm.cache(true)`), `findOne` / `findAll` passent par Redis ; `create` / `update` / `updateOne` / `delete` / `deleteOne` invalident les clés concernées.
 
 ## Exemple complet
 

@@ -282,7 +282,14 @@ export interface Model<
     id: string | number,
     data: Partial<InferValues<TSchema>>,
   ) => Promise<void>;
+  readonly update: (
+    data: Partial<InferValues<TSchema>>,
+    options: { where: WhereClause<TSchema> },
+  ) => Promise<void>;
   readonly deleteOne: (id: string | number) => Promise<void>;
+  readonly delete: (options: {
+    where: WhereClause<TSchema>;
+  }) => Promise<void>;
 }
 
 /**
@@ -360,6 +367,23 @@ export function defineModel<
 
       await model.update(ORM.postgres.getFieldsFromSchema(values as TValues, model.getAttributes()), { where: { id }, logging: ORM.logEnabled ? console.log : false });
     },
+    update: async (
+      data: Partial<InferValues<TSchema>>,
+      { where }: { where: WhereClause<TSchema> },
+    ) => {
+      if (ORM.cacheEnabled && ORM.redis) {
+        await ORM.redis.delStartWith(`model:${options.name}`);
+      }
+
+      const values = applyUpdatedAt(options.schema, data);
+      const effectiveWhere =
+        applySoftDeleteDefault(options.schema, where) ?? where;
+
+      await model.update(
+        ORM.postgres.getFieldsFromSchema(values as TValues, model.getAttributes()),
+        { where: effectiveWhere, logging: ORM.logEnabled ? console.log : false },
+      );
+    },
     deleteOne: async (id: string | number) => {
       // remove CACHE
       if (ORM.cacheEnabled && ORM.redis) {
@@ -367,6 +391,18 @@ export function defineModel<
       }
 
       await model.destroy({ where: { id }, logging: ORM.logEnabled ? console.log : false });
+    },
+    delete: async ({ where }: { where: WhereClause<TSchema> }) => {
+      if (ORM.cacheEnabled && ORM.redis) {
+        await ORM.redis.delStartWith(`model:${options.name}`);
+      }
+
+      const effectiveWhere =
+        applySoftDeleteDefault(options.schema, where) ?? where;
+      await model.destroy({
+        where: effectiveWhere,
+        logging: ORM.logEnabled ? console.log : false,
+      });
     },
     findAll: (async ({
       attributes,

@@ -35,6 +35,8 @@ npm run example
 
 Voir le code : [`examples/nodejs/index.ts`](../../examples/nodejs/index.ts).
 
+L’exemple déclare `users` (enum `status`, timestamps, `$schema`) et `workspace_users` (`update` / `delete` par `where`). Détail de l’API : [index de la doc](../README.md).
+
 ## Stack Docker (Postgres + Redis + Node + Adminer)
 
 ```bash
