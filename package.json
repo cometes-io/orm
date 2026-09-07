@@ -56,6 +56,7 @@
   },
   "dependencies": {
     "pg": "^8.22.0",
+    "redis": "^6.2.1",
     "sequelize": "^6.37.8"
   },
   "directories": {

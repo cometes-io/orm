@@ -552,8 +552,12 @@ describe("Model.update / Model.delete — where", () => {
     const remove = (model: WorkspaceUserModel) =>
       model.delete({ where: { workspace_id: 1, user_id: 2 } });
 
+    const count = (model: WorkspaceUserModel) =>
+      model.count({ where: { workspace_id: 1, user_id: 2 } });
+
     expectTypeOf(update).returns.toEqualTypeOf<Promise<void>>();
     expectTypeOf(remove).returns.toEqualTypeOf<Promise<void>>();
+    expectTypeOf(count).returns.toEqualTypeOf<Promise<number>>();
   });
 
   it("refuse un champ where hors schéma", () => {
@@ -591,6 +595,7 @@ describe("Model.update / Model.delete — where", () => {
 
     const updates: { values: Record<string, unknown>; where: unknown }[] = [];
     const destroys: { where: unknown }[] = [];
+    const counts: { where: unknown }[] = [];
     const attributes = {
       workspace_id: {},
       user_id: {},
@@ -606,10 +611,14 @@ describe("Model.update / Model.delete — where", () => {
       destroy: async (opts: { where: unknown }) => {
         destroys.push({ where: opts.where });
       },
+      count: async (opts: { where?: unknown } = {}) => {
+        counts.push({ where: opts.where });
+        return 2;
+      },
       getAttributes: () => attributes,
     })) as never;
 
-    return { updates, destroys };
+    return { updates, destroys, counts };
   };
 
   it("update envoie data + where (deleted_at: null par défaut, updated_at now)", async () => {
@@ -661,6 +670,34 @@ describe("Model.update / Model.delete — where", () => {
 
     expect(destroys).toHaveLength(1);
     expect(destroys[0]!.where).toEqual({
+      deleted_at: null,
+      workspace_id: 10,
+      user_id: 20,
+    });
+  });
+
+  it("count applique le where et le défaut deleted_at: null", async () => {
+    const { counts } = declareCapturingModel();
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: { type: "number" },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await expect(
+      WorkspaceUserModel.count({
+        where: { workspace_id: 10, user_id: 20 },
+      }),
+    ).resolves.toBe(2);
+
+    expect(counts).toHaveLength(1);
+    expect(counts[0]!.where).toEqual({
       deleted_at: null,
       workspace_id: 10,
       user_id: 20,

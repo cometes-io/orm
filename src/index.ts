@@ -27,4 +27,4 @@ export {
   type MigrationModule,
 } from "./migrate/index.js";
 export { PostgresClient, type PostgresOptions } from "./postgres/index.js";
-export { RedisClient, type RedisOptions } from "./redis/index.js";
+export { RedisClient, REDIS_CACHE_TTL_SECONDS, type RedisOptions } from "./redis/index.js";

@@ -49,14 +49,14 @@ export class Orm {
   }
 
   /**
-   * Vérifie que l'instance répond (stub de santé).
+   * Vérifie que l'instance répond.
    *
    * @returns État de santé postgres / redis
    */
   async ping(): Promise<{ postgres: boolean; redis: boolean }> {
     return {
       postgres: await this.postgres.healthy(),
-      redis: this.redis.healthy(),
+      redis: await this.redis.healthy(),
     };
   }
 

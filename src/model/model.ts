@@ -290,6 +290,9 @@ export interface Model<
   readonly delete: (options: {
     where: WhereClause<TSchema>;
   }) => Promise<void>;
+  readonly count: (options?: {
+    where?: WhereClause<TSchema>;
+  }) => Promise<number>;
 }
 
 /**
@@ -355,6 +358,11 @@ export function defineModel<
       }
 
       const row = await model.findOne({ ...optionsQuery, raw: true, logging: ORM.logEnabled ? console.log : false });
+
+      if (ORM.cacheEnabled && ORM.redis) {
+        await ORM.redis.set(cacheKey, JSON.stringify(row));
+      }
+
       return row as InferValues<TSchema> | null;
     }) as Model<TSchema>["findOne"],
     updateOne: async (id: string | number, data: Partial<InferValues<TSchema>>) => {
@@ -404,6 +412,13 @@ export function defineModel<
         logging: ORM.logEnabled ? console.log : false,
       });
     },
+    count: async ({ where }: { where?: WhereClause<TSchema> } = {}) => {
+      const effectiveWhere = applySoftDeleteDefault(options.schema, where);
+      return await model.count({
+        ...(effectiveWhere ? { where: effectiveWhere } : {}),
+        logging: ORM.logEnabled ? console.log : false,
+      });
+    },
     findAll: (async ({
       attributes,
       where,
@@ -439,7 +454,6 @@ export function defineModel<
       
       if (cacheKey &&ORM.cacheEnabled && ORM.redis) {
         await ORM.redis.set(cacheKey, JSON.stringify(rows));
-        // optionnel : TTL → redis.set(cacheKey, ..., { EX: 60 })
       }
       return rows as InferValues<TSchema>[];
     }) as Model<TSchema>["findAll"],

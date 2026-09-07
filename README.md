@@ -123,8 +123,9 @@ await orm.disconnect();
 | `update` | `(data, { where }) => Promise<void>` | Update par `where`. |
 | `deleteOne` | `(id) => Promise<void>` | Delete par clé primaire. |
 | `delete` | `({ where }) => Promise<void>` | Delete par `where`. |
+| `count` | `({ where? }) => Promise<number>` | Nombre de lignes. |
 
-Avec le cache activé (`orm.cache(true)`), `findOne` / `findAll` passent par Redis ; `create` / `update` / `updateOne` / `delete` / `deleteOne` invalident les clés concernées.
+Avec le cache activé (`orm.cache(true)`), `findOne` / `findAll` passent par Redis (TTL 5 min) ; `create` / `update` / `updateOne` / `delete` / `deleteOne` invalident les clés concernées.
 
 ## Exemple complet
 

@@ -53,6 +53,7 @@ Exporter `Op` depuis `@cometes-io/orm` pour les opérateurs Sequelize (`Op.in`, 
 | `update` | `(data, { where }) => Promise<void>` | Update par clause `where` (obligatoire). |
 | `deleteOne` | `(id) => Promise<void>` | Delete par clé primaire. |
 | `delete` | `({ where }) => Promise<void>` | Delete par clause `where` (obligatoire). |
+| `count` | `({ where? }) => Promise<number>` | Nombre de lignes correspondantes. |
 
 ### `attributes`
 
@@ -94,7 +95,9 @@ await WorkspaceUserModel.delete({
 
 ### Cache Redis
 
-Avec `orm.cache(true)`, `findOne` / `findAll` passent par Redis. `create` / `update` / `updateOne` / `delete` / `deleteOne` invalident les clés concernées.
+`orm.redis` est un vrai client (`url` + `options`, `dbInstance`, `connect` / `disconnect` / `healthy`), comme `orm.postgres`.
+
+Avec `orm.cache(true)`, `findOne` / `findAll` passent par Redis (TTL **5 minutes**). `create` / `update` / `updateOne` / `delete` / `deleteOne` invalident les clés concernées.
 
 ## Référence API
 

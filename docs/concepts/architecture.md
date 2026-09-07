@@ -22,8 +22,8 @@ orm/
 |---------|----------------|
 | `src/` | Code distribué via npm ; seuls les exports de `index.ts` sont publics |
 | `src/migrate/` | Runner des migrations TypeScript Sequelize + table `migrations` |
-| `src/postgres/` | Client PostgreSQL (init → connexion → CRUD → déconnexion) |
-| `src/redis/` | Client Redis (init → connexion → CRUD / cache / queue → déconnexion) |
+| `src/postgres/` | Client PostgreSQL (Sequelize : init → connexion → CRUD → déconnexion) |
+| `src/redis/` | Client Redis (`redis` : init → connexion → cache / queue → déconnexion) |
 | `examples/` | Preuves exécutables (Node, compose, migrations) |
 | `tests/` | Comportement attendu de l’API publique |
 | `docs/` | Guides et concepts ; la référence API vit dans le TSDoc de `src/` |
