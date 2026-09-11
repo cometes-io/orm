@@ -1,6 +1,16 @@
-import { Sequelize, Options, DataTypes } from "sequelize";
+import { Sequelize, Options, DataTypes, type Transaction } from "sequelize";
 import { DefineModelSchema } from "../index.js";
-import { TValues } from "../model/model.js";
+import {
+  TABLE_LOCK_MODES,
+  type TableLockMode,
+  type TValues,
+} from "../model/model.js";
+
+/** `LOCK TABLE` n'accepte qu'un identifiant SQL simple (`users` ou `public.users`). */
+const TABLE_NAME_PART = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+const isSafeTableName = (table: string): boolean =>
+  table.length > 0 && table.split(".").every((part) => TABLE_NAME_PART.test(part));
 
 /**
  * Options de connexion PostgreSQL.
@@ -11,9 +21,9 @@ export type PostgresOptions = {
 };
 
 /**
- * Client PostgreSQL — persistance (stub).
+ * Client PostgreSQL (Sequelize).
  *
- * Cycle de vie : initialisation → connexion → CRUD → déconnexion.
+ * Le constructeur instancie Sequelize ; `healthy()` authentifie vraiment.
  */
 export class PostgresClient {
   readonly url: string;
@@ -27,28 +37,71 @@ export class PostgresClient {
     this.connect();
   }
 
-  /** Indique si le client est connecté. */
+  /** Indique si une instance Sequelize est disponible (pas un ping TCP). */
   get connected(): boolean {
     return this.dbInstance !== undefined;
   }
 
-  /** Établit la connexion (stub). */
+  /**
+   * Instancie Sequelize. La connexion TCP a lieu au premier usage
+   * (`authenticate`, requête, `healthy()`).
+   */
   async connect(): Promise<void> {
-    // sequelize connect
     this.dbInstance = new Sequelize(this.url, this.options);
   }
 
   /**
-   * Exécute une requête SQL (stub CRUD).
+   * Exécute une requête SQL brute et renvoie les lignes.
+   *
+   * Les paramètres sont liés (`$1`, `$2`, …), jamais concaténés.
    *
    * @throws Si le client n'est pas connecté
    */
-  async query<T = unknown>(sql: string, _params: unknown[] = []): Promise<T[]> {
+  async query<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
     if (!this.dbInstance) {
       throw new Error("PostgresClient is not connected");
     }
-    void sql;
-    return [];
+
+    const [rows] = await this.dbInstance.query(sql, {
+      ...(params.length > 0 ? { bind: params } : {}),
+      logging: false,
+    });
+
+    return (rows ?? []) as T[];
+  }
+
+  /** Démarre une transaction Sequelize (`BEGIN`). */
+  async begin(logging: false | ((sql: string) => void) = false): Promise<Transaction> {
+    if (!this.dbInstance) {
+      throw new Error("PostgresClient is not connected");
+    }
+    return this.dbInstance.transaction({ logging });
+  }
+
+  /** `LOCK TABLE … IN <mode> MODE` (dans une transaction). */
+  async lockTable(
+    table: string,
+    mode: TableLockMode,
+    transaction: Transaction,
+    logging: false | ((sql: string) => void) = false,
+  ): Promise<void> {
+    if (!this.dbInstance) {
+      throw new Error("PostgresClient is not connected");
+    }
+    if (!isSafeTableName(table)) {
+      throw new Error("Invalid table name");
+    }
+    if (!TABLE_LOCK_MODES.includes(mode)) {
+      throw new Error("Invalid lock mode");
+    }
+    const quoted = table
+      .split(".")
+      .map((part) => `"${part}"`)
+      .join(".");
+    await this.dbInstance.query(`LOCK TABLE ${quoted} IN ${mode} MODE`, {
+      transaction,
+      logging,
+    });
   }
 
   /** Ferme la connexion. */
@@ -60,81 +113,92 @@ export class PostgresClient {
     delete this.dbInstance;
   }
 
-  /** Indique si le client est sain et ses informations de santé. */
+  /** Indique si le client est joignable (`authenticate`). */
   async healthy(): Promise<boolean> {
     try {
-      if(!this.dbInstance) {
+      if (!this.dbInstance) {
         return false;
       }
       await this.dbInstance.authenticate();
       return true;
     } catch (error) {
-      console.error('Unable to connect to the database:', error);
+      console.error("Unable to connect to the database:", error);
       return false;
     }
   }
 
+  /**
+   * Convertit le schéma ORM en attributs Sequelize
+   * (`ENUM`, `defaultValue`, `references`).
+   *
+   * `autoIncrement` n'est posé que sur une clé primaire numérique unique :
+   * une clé composite (table de liaison) n'est jamais auto-incrémentée.
+   */
   formatModelSchema(schema: Record<string, DefineModelSchema>) {
-    const list: Record<string, any> = {};
+    const attributes: Record<string, any> = {};
+    const primaryFields = Object.values(schema).filter((field) => field.primary);
+    const autoIncrementPrimary =
+      primaryFields.length === 1 && primaryFields[0]?.type === "number";
 
-    const getType = (type: string) => {
-      switch(type) {
-        case 'string':
-          return DataTypes.STRING;
-        case 'number':
-          return DataTypes.INTEGER;
-        case 'boolean':
-          return DataTypes.BOOLEAN;
-        case 'float':
-          return DataTypes.FLOAT;
-        case 'date':
-          return DataTypes.DATE;
-        default:
-          throw new Error(`Unknown type: ${type}`);
-      }
-    }
-
-    for(const [key, value] of Object.entries(schema)) {
-      const enumValues = value.enum;
+    for (const [column, field] of Object.entries(schema)) {
+      const enumValues = field.enum;
       const sequelizeType =
-        value.type === "string" && enumValues && enumValues.length > 0
+        field.type === "string" && enumValues && enumValues.length > 0
           ? DataTypes.ENUM(...(enumValues.map(String) as [string, ...string[]]))
-          : getType(value.type);
+          : toSequelizeDataType(field.type);
 
-      list[key] = {
+      attributes[column] = {
         type: sequelizeType,
-        primaryKey: value.primary ?? false,
-        autoIncrement: value.primary ?? false,
-        ...(value.default !== undefined ? { defaultValue: value.default } : {}),
+        primaryKey: field.primary ?? false,
+        autoIncrement: (field.primary ?? false) && autoIncrementPrimary,
+        allowNull: field.primary ? false : field.nullable === true,
+        ...(field.default !== undefined ? { defaultValue: field.default } : {}),
+        ...(field.references
+          ? {
+              references: {
+                model: field.references.model.name,
+                key: field.references.key,
+              },
+            }
+          : {}),
+      };
+    }
+
+    return attributes;
+  }
+
+  /** Ne conserve que les champs présents dans les attributs Sequelize. */
+  getFieldsFromSchema(values: TValues, attributes: Record<string, any>) {
+    const fields: Record<string, any> = {};
+
+    for (const [key, value] of Object.entries(values)) {
+      if (attributes[key]) {
+        fields[key] = value;
       }
     }
 
-    //console.log('formatModelSchema', list);
-
-    return list;
+    return fields;
   }
 
-  getFieldsFromSchema(schema: TValues, attributes: Record<string, any>) {
-    const list: Record<string, any> = {};
-
-      for(const [key, value] of Object.entries(schema)) {
-        if(attributes[key]) {
-          list[key] = value;
-        }
-      }
-
-    return list;
-  }
-
-  getColumnsFromSchema(schema: string[], attributes: Record<string, any>) {
-    const list: string[] = [];
-
-      for(const attribute of schema) {
-        if(attributes[attribute]) {
-          list.push(attribute);
-        }
-      }
-
-    return list;
+  /** Ne conserve que les colonnes réellement définies sur le modèle. */
+  getColumnsFromSchema(columns: string[], attributes: Record<string, any>) {
+    return columns.filter((column) => Boolean(attributes[column]));
   }
 }
+
+const toSequelizeDataType = (type: string) => {
+  switch (type) {
+    case "string":
+      return DataTypes.STRING;
+    case "number":
+      return DataTypes.INTEGER;
+    case "boolean":
+      return DataTypes.BOOLEAN;
+    case "float":
+      return DataTypes.FLOAT;
+    case "date":
+      return DataTypes.DATE;
+    default:
+      throw new Error(`Unknown type: ${type}`);
+  }
+};

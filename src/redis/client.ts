@@ -31,18 +31,20 @@ export class RedisClient {
   constructor(options: RedisOptions = { url: "", options: {} }) {
     this.url = options.url ?? "";
     this.options = options.options ?? {};
-
-    this.connect();
+    this.dbInstance = createClient({
+      url: this.url,
+      ...this.options,
+    }) as RedisDbInstance;
   }
 
-  /** Indique si le client est instancié (comme `PostgresClient.connected`). */
+  /** Indique si le socket Redis est ouvert. */
   get connected(): boolean {
-    return this.dbInstance !== undefined;
+    return this.dbInstance?.isOpen === true;
   }
 
   /**
-   * Instancie le client Redis (comme `new Sequelize(...)`).
-   * L’ouverture du socket a lieu à `healthy()` ou à la première commande.
+   * Instancie le client Redis, puis ouvre le socket s'il ne l'est pas.
+   * Un serveur injoignable laisse `connected` à `false` sans lever.
    */
   async connect(): Promise<void> {
     if (!this.dbInstance) {
@@ -50,6 +52,13 @@ export class RedisClient {
         url: this.url,
         ...this.options,
       }) as RedisDbInstance;
+    }
+    if (!this.dbInstance.isOpen) {
+      try {
+        await this.dbInstance.connect();
+      } catch {
+        // `healthy()` / `ping()` exposent l'échec ; `connected` reste false.
+      }
     }
   }
 
@@ -87,12 +96,16 @@ export class RedisClient {
     await this.dbInstance!.del(key);
   }
 
-  async delStartWith(key: string): Promise<void> {
+  /**
+   * Supprime toutes les clés dont le nom commence par `prefix`
+   * (SCAN, pas KEYS, pour ne pas bloquer Redis).
+   */
+  async delStartWith(prefix: string): Promise<void> {
     await this.#ensureOpen();
     const keys: string[] = [];
 
     for await (const found of this.dbInstance!.scanIterator({
-      MATCH: `${key}*`,
+      MATCH: `${escapeRedisGlob(prefix)}*`,
     })) {
       const batch = Array.isArray(found) ? found : [found];
       for (const item of batch) {
@@ -102,10 +115,8 @@ export class RedisClient {
       }
     }
 
-    if (keys.length > 0) {
-      for (const found of keys) {
-        await this.dbInstance!.del(found);
-      }
+    for (const key of keys) {
+      await this.dbInstance!.del(key);
     }
   }
 
@@ -129,15 +140,29 @@ export class RedisClient {
     return (await this.dbInstance!.lPop(queue)) ?? null;
   }
 
-  /** Ferme la connexion. */
+  /**
+   * Ferme la connexion.
+   *
+   * Fermeture propre uniquement si le client est prêt : sinon (serveur
+   * injoignable, reconnexion en cours) `close()` attendrait la fin des
+   * tentatives, ce qui bloquerait l'arrêt de l'application.
+   */
   async disconnect(): Promise<void> {
-    if (!this.dbInstance) {
+    const client = this.dbInstance;
+    if (!client) {
       return;
     }
-    if (this.dbInstance.isOpen) {
-      await this.dbInstance.quit();
-    }
     delete this.dbInstance;
+
+    try {
+      if (client.isReady) {
+        await client.close();
+      } else if (client.isOpen) {
+        client.destroy();
+      }
+    } catch {
+      // Socket déjà fermé : il n'y a plus rien à libérer.
+    }
   }
 
   #assertInstantiated(): void {
@@ -170,3 +195,8 @@ export class RedisClient {
     }
   }
 }
+
+/** Protège `*?[]` pour un MATCH Redis littéral (`*` final d'invalidation exclu). */
+const escapeRedisGlob = (value: string): string =>
+  value.replace(/[\\*?[\]]/g, "\\$&");
+

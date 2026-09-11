@@ -1,29 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { RedisClient } from "../src/index.js";
+import { RedisClient, modelCacheNamespace } from "../src/index.js";
+import { REDIS_URL, redisReachable } from "./helpers/services.js";
 
 describe("RedisClient", () => {
+  it("applique l'url fournie", () => {
+    const client = new RedisClient({ url: "redis://cache:6380" });
+    expect(client.url).toBe("redis://cache:6380");
+  });
+
+  it("refuse les opérations sans connexion", async () => {
+    const client = new RedisClient({ url: REDIS_URL });
+    await client.disconnect();
+    await expect(client.set("k", "v")).rejects.toThrow(
+      "RedisClient is not connected",
+    );
+  });
+});
+
+// Nécessite un Redis joignable : ignoré si le port ne répond pas.
+describe.skipIf(!redisReachable)("RedisClient (intégration)", () => {
   let client: RedisClient;
 
   beforeEach(async () => {
-    client = new RedisClient({
-      url: "redis://localhost:6379",
-    });
+    client = new RedisClient({ url: REDIS_URL });
     await client.connect();
   });
 
   afterEach(async () => {
     await client.disconnect();
-  });
-
-  it("applique l'url fournie", () => {
-    expect(client.url).toBe("redis://localhost:6379");
-  });
-
-  it("refuse les opérations sans connexion", async () => {
-    await client.disconnect();
-    await expect(client.set("k", "v")).rejects.toThrow(
-      "RedisClient is not connected",
-    );
   });
 
   it("supporte set/get (cache)", async () => {
@@ -49,6 +53,20 @@ describe("RedisClient", () => {
     await expect(client.get("model:users:findAll")).resolves.toBeNull();
     await expect(client.get("model:users:findOne:1")).resolves.toBeNull();
     await expect(client.get("model:posts:findAll")).resolves.toBe("c");
+  });
+
+  it("n'efface pas un modèle dont le nom partage un préfixe", async () => {
+    await client.set(`${modelCacheNamespace("users")}findAll:`, "a");
+    await client.set(`${modelCacheNamespace("users_extra")}findAll:`, "b");
+
+    await client.delStartWith(modelCacheNamespace("users"));
+
+    await expect(
+      client.get(`${modelCacheNamespace("users")}findAll:`),
+    ).resolves.toBeNull();
+    await expect(
+      client.get(`${modelCacheNamespace("users_extra")}findAll:`),
+    ).resolves.toBe("b");
   });
 
   it("supporte enqueue/dequeue (queue)", async () => {

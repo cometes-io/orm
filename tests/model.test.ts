@@ -1,16 +1,21 @@
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import {
+  CACHED_DATE_KEY,
   Op,
   Orm,
+  parseCachedJson,
+  stringifyCachedJson,
   type InferPartialValues,
   type InferValues,
   type Model,
+  type Transaction,
   type WhereClause,
 } from "../src/index.js";
 import {
   applyCreateTimestamps,
   applySoftDeleteDefault,
   applyUpdatedAt,
+  primaryKeyWhere,
 } from "../src/model/model.js";
 
 describe("declareModel", () => {
@@ -157,8 +162,8 @@ describe("Model.findAll / findOne — inférence depuis attributes", () => {
 
   it("un attribut inexistant provoque une erreur TypeScript", () => {
     const query = (model: ProductModel) =>
-      // @ts-expect-error — "unknown" n'existe pas dans le schéma
       model.findAll({
+        // @ts-expect-error — "unknown" n'existe pas dans le schéma
         attributes: ["id", "unknown"] as const,
       });
 
@@ -212,6 +217,233 @@ describe("Model.findAll / findOne — inférence depuis attributes", () => {
       });
 
     expect(typeof invalidWhere).toBe("function");
+  });
+
+  it("accepte order et limit avec where", () => {
+    const query = (model: ProductModel) =>
+      model.findAll({
+        attributes: ["id", "name"] as const,
+        where: { available: true },
+        order: [["name", "DESC"], "id"],
+        limit: 10,
+      });
+
+    expectTypeOf(query).returns.toEqualTypeOf<
+      Promise<{ id: number; name: string }[]>
+    >();
+
+    const invalidOrder = (model: ProductModel) =>
+      model.findOne({
+        order: [
+          // @ts-expect-error — "missing" n'est pas un champ du schéma
+          ["missing", "DESC"],
+        ],
+        limit: 1,
+      });
+
+    expect(typeof invalidOrder).toBe("function");
+  });
+});
+
+describe("Model.findAll / findOne — include par clé étrangère", () => {
+  let orm: Orm;
+
+  afterEach(async () => {
+    if (orm) {
+      await orm.disconnect().catch(() => undefined);
+    }
+  });
+
+  const declareModels = () => {
+    orm = new Orm({
+      postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+      redis: { url: "redis://localhost:6379" },
+    });
+
+    const associations: {
+      target: unknown;
+      options: { as: string; foreignKey: string; targetKey: string };
+    }[] = [];
+    const queries: Record<string, unknown>[] = [];
+    const sequelizeModels: Record<string, Record<string, unknown>> = {};
+
+    orm.postgres.dbInstance!.define = ((name: string) => {
+      const attributes =
+        name === "users"
+          ? {
+              id: {},
+              name: {},
+              status: {},
+              deleted_at: {},
+            }
+          : {
+              workspace_id: {},
+              user_id: {},
+              role: {},
+            };
+      const sequelizeModel = {
+        getAttributes: () => attributes,
+        belongsTo: (
+          target: unknown,
+          options: { as: string; foreignKey: string; targetKey: string },
+        ) => {
+          associations.push({ target, options });
+        },
+        findOne: async (options: Record<string, unknown>) => {
+          queries.push(options);
+          return {
+            get: () => ({
+              workspace_id: 1,
+              user_id: 2,
+              user: { id: 2, name: "John" },
+            }),
+          };
+        },
+        findAll: async (options: Record<string, unknown>) => {
+          queries.push(options);
+          return [
+            {
+              get: () => ({
+                workspace_id: 1,
+                user_id: 2,
+                user: { id: 2, name: "John" },
+              }),
+            },
+          ];
+        },
+      };
+      sequelizeModels[name] = sequelizeModel;
+      return sequelizeModel;
+    }) as never;
+
+    const UserModel = orm.declareModel({
+      name: "users",
+      schema: {
+        id: { type: "number", primary: true },
+        name: { type: "string" },
+        status: {
+          type: "string",
+          enum: ["active", "inactive"],
+        },
+        deleted_at: { type: "date", nullable: true },
+      },
+    });
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: {
+          type: "number",
+          references: { model: UserModel, key: "id" },
+        },
+        role: { type: "string" },
+      },
+    });
+
+    return {
+      UserModel,
+      WorkspaceUserModel,
+      associations,
+      queries,
+      sequelizeModels,
+    };
+  };
+
+  it("infère les attributs inclus sous l'alias de *_id", () => {
+    const { UserModel, WorkspaceUserModel } = declareModels();
+
+    const query = () =>
+      WorkspaceUserModel.findOne({
+        attributes: ["workspace_id", "role"] as const,
+        include: [
+          {
+            relation: "user_id",
+            model: UserModel,
+            attributes: ["id", "name"] as const,
+          },
+        ] as const,
+      });
+
+    type IncludedRow = NonNullable<Awaited<ReturnType<typeof query>>>;
+    expectTypeOf<IncludedRow>().not.toBeNever();
+    expectTypeOf<IncludedRow["workspace_id"]>().toEqualTypeOf<number>();
+    expectTypeOf<IncludedRow["role"]>().toEqualTypeOf<string>();
+    expectTypeOf<IncludedRow["user"]>().toEqualTypeOf<
+      Partial<typeof UserModel.$schema> | null
+    >();
+  });
+
+  it("déclare belongsTo et transmet l'include à Sequelize", async () => {
+    const {
+      WorkspaceUserModel,
+      UserModel,
+      associations,
+      queries,
+      sequelizeModels,
+    } = declareModels();
+
+    const row = await WorkspaceUserModel.findOne({
+      where: { workspace_id: 1 },
+      include: [
+        {
+          relation: "user_id",
+          model: UserModel,
+          attributes: ["id", "name"] as const,
+          where: { status: "active" },
+          required: true,
+        },
+      ] as const,
+    });
+
+    expect(associations).toEqual([
+      {
+        target: sequelizeModels["users"],
+        options: {
+          as: "user",
+          foreignKey: "user_id",
+          targetKey: "id",
+        },
+      },
+    ]);
+    expect(queries[0]).toMatchObject({
+      raw: false,
+      include: [
+        {
+          association: "user",
+          attributes: ["id", "name"],
+          where: { deleted_at: null, status: "active" },
+          required: true,
+        },
+      ],
+    });
+    expect(row).toMatchObject({
+      workspace_id: 1,
+      user: { id: 2, name: "John" },
+    });
+  });
+
+  it("permet un alias explicite et refuse un modèle non déclaré", () => {
+    const { UserModel } = declareModels();
+
+    expect(() =>
+      orm.declareModel({
+        name: "audit_logs",
+        schema: {
+          actor_id: {
+            type: "number",
+            references: {
+              model: {
+                ...UserModel,
+                name: "undeclared_users",
+              },
+              key: "id",
+              as: "actor",
+            },
+          },
+        },
+      }),
+    ).toThrow('Referenced model "undeclared_users" must be declared first');
   });
 });
 
@@ -428,6 +660,60 @@ describe("applyCreateTimestamps", () => {
   });
 });
 
+describe("primaryKeyWhere", () => {
+  it("accepte une valeur scalaire sur une PK unique", () => {
+    expect(
+      primaryKeyWhere({ id: { type: "number", primary: true } }, 7),
+    ).toEqual({ id: 7 });
+  });
+
+  it("exige un objet sur une PK composite", () => {
+    const schema = {
+      workspace_id: { type: "number" as const, primary: true as const },
+      user_id: { type: "number" as const, primary: true as const },
+    };
+    expect(() => primaryKeyWhere(schema, 1)).toThrow(
+      "Composite primary key requires an object",
+    );
+    expect(
+      primaryKeyWhere(schema, { workspace_id: 1, user_id: 2 }),
+    ).toEqual({ workspace_id: 1, user_id: 2 });
+  });
+});
+
+describe("parseCachedJson", () => {
+  it("restaure uniquement les Date taguées", () => {
+    const at = new Date("2026-09-11T07:21:13.618Z");
+    const parsed = parseCachedJson<{ at: Date; name: string; iso: string }>(
+      stringifyCachedJson({
+        at,
+        name: "Ada",
+        iso: "2026-09-11T07:21:13.618Z",
+      }),
+    );
+    expect(parsed.at).toBeInstanceOf(Date);
+    expect(parsed.at.toISOString()).toBe(at.toISOString());
+    expect(parsed.name).toBe("Ada");
+    expect(parsed.iso).toBe("2026-09-11T07:21:13.618Z");
+  });
+
+  it("ne transforme pas une string ISO brute en Date", () => {
+    const parsed = parseCachedJson<{ note: string }>(
+      '{"note":"2026-09-11T07:21:13.618Z"}',
+    );
+    expect(parsed.note).toBe("2026-09-11T07:21:13.618Z");
+  });
+
+  it("tague avec la clé unique du package", () => {
+    const encoded = JSON.parse(
+      stringifyCachedJson({ at: new Date("2026-09-11T07:21:13.618Z") }),
+    ) as { at: Record<string, string> };
+    expect(encoded.at).toEqual({
+      [CACHED_DATE_KEY]: "2026-09-11T07:21:13.618Z",
+    });
+  });
+});
+
 describe("Model.create — timestamps envoyés à l'INSERT", () => {
   let orm: Orm;
 
@@ -547,17 +833,45 @@ describe("Model.update / Model.delete — where", () => {
     const update = (model: WorkspaceUserModel, role: string) =>
       model.update(
         { role },
-        { where: { workspace_id: 1, user_id: 2 } },
+        {
+          where: { workspace_id: 1, user_id: 2 },
+          order: [["updated_at", "DESC"]],
+        },
       );
     const remove = (model: WorkspaceUserModel) =>
-      model.delete({ where: { workspace_id: 1, user_id: 2 } });
+      model.delete({
+        where: { workspace_id: 1, user_id: 2 },
+        order: [["updated_at", "DESC"]],
+      });
+
+    const noWriteLimit = (model: WorkspaceUserModel) =>
+      model.update(
+        { role: "admin" },
+        {
+          where: { workspace_id: 1 },
+          // @ts-expect-error — PostgreSQL n'a pas de UPDATE … LIMIT
+          limit: 1,
+        },
+      );
 
     const count = (model: WorkspaceUserModel) =>
-      model.count({ where: { workspace_id: 1, user_id: 2 } });
+      model.count({
+        where: { workspace_id: 1, user_id: 2 },
+        order: [["updated_at", "DESC"]],
+        limit: 5,
+      });
+
+    const withTx = (model: WorkspaceUserModel, transaction: Transaction) =>
+      model.update(
+        { role: "admin" },
+        { where: { workspace_id: 1 }, transaction },
+      );
 
     expectTypeOf(update).returns.toEqualTypeOf<Promise<void>>();
     expectTypeOf(remove).returns.toEqualTypeOf<Promise<void>>();
     expectTypeOf(count).returns.toEqualTypeOf<Promise<number>>();
+    expectTypeOf(withTx).returns.toEqualTypeOf<Promise<void>>();
+    expect(typeof noWriteLimit).toBe("function");
   });
 
   it("refuse un champ where hors schéma", () => {
@@ -593,9 +907,32 @@ describe("Model.update / Model.delete — where", () => {
       redis: { url: "redis://localhost:6379" },
     });
 
-    const updates: { values: Record<string, unknown>; where: unknown }[] = [];
-    const destroys: { where: unknown }[] = [];
-    const counts: { where: unknown }[] = [];
+    const updates: {
+      values: Record<string, unknown>;
+      where: unknown;
+      order?: unknown;
+      limit?: number;
+      transaction?: unknown;
+    }[] = [];
+    const destroys: {
+      where: unknown;
+      order?: unknown;
+      limit?: number;
+      transaction?: unknown;
+    }[] = [];
+    const counts: {
+      where: unknown;
+      order?: unknown;
+      limit?: number;
+      transaction?: unknown;
+    }[] = [];
+    const finds: {
+      where: unknown;
+      order?: unknown;
+      limit?: number;
+      transaction?: unknown;
+      lock?: unknown;
+    }[] = [];
     const attributes = {
       workspace_id: {},
       user_id: {},
@@ -604,21 +941,92 @@ describe("Model.update / Model.delete — where", () => {
       updated_at: {},
     };
 
+    const captureExtras = (opts: {
+      order?: unknown;
+      limit?: number;
+      transaction?: unknown;
+      lock?: unknown;
+    }) => ({
+      ...(opts.order !== undefined ? { order: opts.order } : {}),
+      ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+      ...(opts.transaction !== undefined
+        ? { transaction: opts.transaction }
+        : {}),
+      ...(opts.lock !== undefined ? { lock: opts.lock } : {}),
+    });
+
     orm.postgres.dbInstance!.define = (() => ({
-      update: async (values: Record<string, unknown>, opts: { where: unknown }) => {
-        updates.push({ values, where: opts.where });
+      create: async () => ({ get: () => ({}) }),
+      update: async (
+        values: Record<string, unknown>,
+        opts: {
+          where: unknown;
+          order?: unknown;
+          limit?: number;
+          transaction?: unknown;
+        },
+      ) => {
+        updates.push({
+          values,
+          where: opts.where,
+          ...captureExtras(opts),
+        });
       },
-      destroy: async (opts: { where: unknown }) => {
-        destroys.push({ where: opts.where });
+      destroy: async (opts: {
+        where: unknown;
+        order?: unknown;
+        limit?: number;
+        transaction?: unknown;
+      }) => {
+        destroys.push({
+          where: opts.where,
+          ...captureExtras(opts),
+        });
       },
-      count: async (opts: { where?: unknown } = {}) => {
-        counts.push({ where: opts.where });
+      count: async (
+        opts: {
+          where?: unknown;
+          order?: unknown;
+          limit?: number;
+          transaction?: unknown;
+        } = {},
+      ) => {
+        counts.push({
+          where: opts.where,
+          ...captureExtras(opts),
+        });
         return 2;
+      },
+      findAll: async (opts: {
+        where?: unknown;
+        order?: unknown;
+        limit?: number;
+        transaction?: unknown;
+        lock?: unknown;
+      }) => {
+        finds.push({
+          where: opts.where,
+          ...captureExtras(opts),
+        });
+        return [];
+      },
+      findOne: async (opts: {
+        where?: unknown;
+        order?: unknown;
+        limit?: number;
+        transaction?: unknown;
+        lock?: unknown;
+      }) => {
+        finds.push({
+          where: opts.where,
+          ...captureExtras(opts),
+        });
+        return null;
       },
       getAttributes: () => attributes,
     })) as never;
 
-    return { updates, destroys, counts };
+    return { updates, destroys, counts, finds };
   };
 
   it("update envoie data + where (deleted_at: null par défaut, updated_at now)", async () => {
@@ -650,8 +1058,8 @@ describe("Model.update / Model.delete — where", () => {
     });
   });
 
-  it("delete applique le where et le défaut deleted_at: null", async () => {
-    const { destroys } = declareCapturingModel();
+  it("delete pose deleted_at au lieu de détruire la ligne", async () => {
+    const { updates, destroys } = declareCapturingModel();
 
     const WorkspaceUserModel = orm.declareModel({
       name: "workspace_users",
@@ -668,8 +1076,11 @@ describe("Model.update / Model.delete — where", () => {
       where: { workspace_id: 10, user_id: 20 },
     });
 
-    expect(destroys).toHaveLength(1);
-    expect(destroys[0]!.where).toEqual({
+    expect(destroys).toHaveLength(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.values["deleted_at"]).toBeInstanceOf(Date);
+    expect(updates[0]!.values["updated_at"]).toBeInstanceOf(Date);
+    expect(updates[0]!.where).toEqual({
       deleted_at: null,
       workspace_id: 10,
       user_id: 20,
@@ -702,5 +1113,317 @@ describe("Model.update / Model.delete — where", () => {
       workspace_id: 10,
       user_id: 20,
     });
+  });
+
+  it("findAll / count transmettent order et limit ; update / delete seulement order", async () => {
+    const { finds, updates, destroys, counts } = declareCapturingModel();
+    const order = [["updated_at", "DESC"], "user_id"] as const;
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: { type: "number" },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await WorkspaceUserModel.findAll({
+      attributes: ["workspace_id", "user_id"] as const,
+      where: { workspace_id: 10 },
+      order,
+      limit: 3,
+    });
+    await WorkspaceUserModel.update(
+      { role: "admin" },
+      { where: { workspace_id: 10 }, order },
+    );
+    await WorkspaceUserModel.delete({
+      where: { workspace_id: 10 },
+      order,
+    });
+    await WorkspaceUserModel.count({
+      where: { workspace_id: 10 },
+      order,
+      limit: 5,
+    });
+
+    expect(finds[0]).toMatchObject({ order, limit: 3 });
+    expect(updates[0]).toMatchObject({ order });
+    expect(updates[0]).not.toHaveProperty("limit");
+    expect(updates[1]).toMatchObject({ order });
+    expect(updates[1]).not.toHaveProperty("limit");
+    expect(destroys).toHaveLength(0);
+    expect(counts[0]).toMatchObject({ order, limit: 5 });
+  });
+
+  it("transmet la transaction courante et une transaction explicite", async () => {
+    const { finds, updates, destroys, counts } = declareCapturingModel();
+    const fakeTx = { id: "implicit" };
+    const explicitTx = { id: "explicit" };
+    orm.currentTransaction = fakeTx as never;
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: { type: "number" },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await WorkspaceUserModel.findAll({
+      where: { workspace_id: 10 },
+    });
+    await WorkspaceUserModel.update(
+      { role: "admin" },
+      { where: { workspace_id: 10 }, transaction: explicitTx as never },
+    );
+    await WorkspaceUserModel.delete({
+      where: { workspace_id: 10 },
+    });
+    await WorkspaceUserModel.count({
+      where: { workspace_id: 10 },
+    });
+
+    expect(finds[0]?.transaction).toBe(fakeTx);
+    expect(updates[0]?.transaction).toBe(explicitTx);
+    expect(updates[1]?.transaction).toBe(fakeTx);
+    expect(destroys).toHaveLength(0);
+    expect(counts[0]?.transaction).toBe(fakeTx);
+  });
+
+  it("transmet lock (courant, explicite, ou lock: false)", async () => {
+    const { finds } = declareCapturingModel();
+    const fakeTx = { id: "tx" };
+    orm.currentTransaction = fakeTx as never;
+    orm.currentLock = "UPDATE";
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: { type: "number" },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await WorkspaceUserModel.findAll({
+      where: { workspace_id: 10 },
+    });
+    await WorkspaceUserModel.findOne({
+      where: { workspace_id: 10 },
+      lock: "SHARE",
+    });
+    await WorkspaceUserModel.findAll({
+      where: { workspace_id: 10 },
+      lock: false,
+    });
+
+    expect(finds[0]?.lock).toBe("UPDATE");
+    expect(finds[1]?.lock).toBe("SHARE");
+    expect(finds[2]?.lock).toBeUndefined();
+  });
+
+  it("refuse un lock sans transaction", async () => {
+    const { finds } = declareCapturingModel();
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: { type: "number" },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await expect(
+      WorkspaceUserModel.findOne({
+        where: { workspace_id: 10 },
+        lock: true,
+      }),
+    ).rejects.toThrow("A transaction is required to lock rows");
+    expect(finds).toHaveLength(0);
+  });
+
+  it("ne cache pas les lectures avec where, include, order ou limit", async () => {
+    const { finds } = declareCapturingModel();
+    const gets: string[] = [];
+    const sets: string[] = [];
+    orm.cache(true);
+    orm.redis.get = (async (key: string) => {
+      gets.push(key);
+      return null;
+    }) as typeof orm.redis.get;
+    orm.redis.set = (async (key: string) => {
+      sets.push(key);
+    }) as typeof orm.redis.set;
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number" },
+        user_id: { type: "number" },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await WorkspaceUserModel.findAll({
+      attributes: ["workspace_id"] as const,
+    });
+    await WorkspaceUserModel.findAll({
+      attributes: ["workspace_id"] as const,
+      where: { workspace_id: 10 },
+    });
+    await WorkspaceUserModel.findAll({
+      attributes: ["workspace_id"] as const,
+      order: ["workspace_id"],
+    });
+    await WorkspaceUserModel.findAll({
+      attributes: ["workspace_id"] as const,
+      limit: 2,
+    });
+    await WorkspaceUserModel.findAll({
+      attributes: ["workspace_id"] as const,
+      include: [],
+    } as never);
+
+    expect(finds).toHaveLength(5);
+    expect(gets).toEqual([
+      "cometes:orm:model:workspace_users:findAll:workspace_id",
+    ]);
+    expect(sets).toEqual([
+      "cometes:orm:model:workspace_users:findAll:workspace_id",
+    ]);
+  });
+
+  it("invalide tout le préfixe du modèle à chaque écriture", async () => {
+    declareCapturingModel();
+    const prefixes: string[] = [];
+    orm.cache(true);
+    orm.redis.delStartWith = (async (prefix: string) => {
+      prefixes.push(prefix);
+    }) as typeof orm.redis.delStartWith;
+
+    const UserModel = orm.declareModel({
+      name: "users",
+      schema: {
+        id: { type: "number", primary: true },
+        name: { type: "string" },
+      },
+    });
+
+    await UserModel.create({ name: "Ada" });
+    await UserModel.updateOne(1, { name: "Ada Lovelace" });
+    await UserModel.update({ name: "x" }, { where: { id: 1 } });
+    await UserModel.deleteOne(1);
+    await UserModel.delete({ where: { id: 1 } });
+
+    expect(prefixes).toEqual([
+      "cometes:orm:model:users:",
+      "cometes:orm:model:users:",
+      "cometes:orm:model:users:",
+      "cometes:orm:model:users:",
+      "cometes:orm:model:users:",
+    ]);
+  });
+
+  it("updateOne / deleteOne ciblent une clé primaire composite", async () => {
+    const { updates } = declareCapturingModel();
+
+    const WorkspaceUserModel = orm.declareModel({
+      name: "workspace_users",
+      schema: {
+        workspace_id: { type: "number", primary: true },
+        user_id: { type: "number", primary: true },
+        role: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+        updated_at: { type: "date" },
+      },
+    });
+
+    await expect(WorkspaceUserModel.updateOne(1 as never, { role: "admin" })).rejects.toThrow(
+      "Composite primary key requires an object",
+    );
+
+    await WorkspaceUserModel.updateOne(
+      { workspace_id: 10, user_id: 20 },
+      { role: "admin" },
+    );
+    await WorkspaceUserModel.deleteOne({ workspace_id: 10, user_id: 20 });
+
+    expect(updates[0]!.where).toEqual({ workspace_id: 10, user_id: 20 });
+    expect(updates[1]!.where).toEqual({
+      deleted_at: null,
+      workspace_id: 10,
+      user_id: 20,
+    });
+    expect(updates[1]!.values["deleted_at"]).toBeInstanceOf(Date);
+  });
+
+  it("delete sans deleted_at détruit vraiment la ligne", async () => {
+    const { destroys } = declareCapturingModel();
+
+    const TagModel = orm.declareModel({
+      name: "tags",
+      schema: {
+        id: { type: "number", primary: true },
+        name: { type: "string" },
+      },
+    });
+
+    await TagModel.delete({ where: { id: 1 } });
+    expect(destroys).toHaveLength(1);
+    expect(destroys[0]!.where).toEqual({ id: 1 });
+  });
+
+  it("force: true détruit même avec deleted_at", async () => {
+    const { updates, destroys } = declareCapturingModel();
+
+    const UserModel = orm.declareModel({
+      name: "users",
+      schema: {
+        id: { type: "number", primary: true },
+        deleted_at: { type: "date", nullable: true },
+      },
+    });
+
+    await UserModel.deleteOne(1, { force: true });
+    expect(updates).toHaveLength(0);
+    expect(destroys).toHaveLength(1);
+    expect(destroys[0]!.where).toEqual({ id: 1 });
+  });
+
+  it("relit les Date depuis le cache Redis", async () => {
+    declareCapturingModel();
+    const createdAt = new Date("2026-09-11T07:21:13.618Z");
+    orm.cache(true);
+    orm.redis.get = (async () =>
+      stringifyCachedJson({
+        id: 1,
+        created_at: createdAt,
+      })) as typeof orm.redis.get;
+
+    const UserModel = orm.declareModel({
+      name: "users",
+      schema: {
+        id: { type: "number", primary: true },
+        created_at: { type: "date" },
+      },
+    });
+
+    const row = await UserModel.findOne({ attributes: ["id", "created_at"] as const });
+    expect(row?.created_at).toBeInstanceOf(Date);
+    expect(row?.created_at.toISOString()).toBe(createdAt.toISOString());
   });
 });

@@ -17,11 +17,19 @@ export async function up(
     {
       workspace_id: {
         type: DataTypes.INTEGER,
+        primaryKey: true,
         allowNull: false,
       },
       user_id: {
         type: DataTypes.INTEGER,
+        primaryKey: true,
         allowNull: false,
+        references: {
+          model: "users",
+          key: "id",
+        },
+        onUpdate: "CASCADE",
+        onDelete: "CASCADE",
       },
       role: {
         type: DataTypes.TEXT,

@@ -21,6 +21,37 @@ jobs:
       matrix:
         node-version: [20, 22] # 20 est la version LTS, 22 est la version actuelle
 
+    # Les suites d'intégration (clients Postgres / Redis) sont ignorées quand le
+    # service ne répond pas : on les fournit ici pour qu'elles tournent vraiment.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: orm
+          POSTGRES_PASSWORD: orm
+          POSTGRES_DB: orm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orm -d orm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_URL: postgres://orm:orm@localhost:5432/orm
+      REDIS_URL: redis://localhost:6379
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
