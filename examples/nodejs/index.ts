@@ -39,6 +39,7 @@ console.log(`Redis      → ${orm.redis.url} (connected=${orm.redis.connected})`
 section("CRUD");
 orm.cache(false);
 orm.log(false);
+// orm.logTo(console.error);
 await resetFixtures();
 
 // `create` renvoie la ligne complète : les champs absents de l'appel
@@ -92,15 +93,15 @@ section("include (clé étrangère workspace_users.user_id → users.id)");
 
 await WorkspaceUserModel.create({ workspace_id: 1, user_id: user.id });
 
-// `relation` désigne le champ FK ; l'alias du résultat est déduit : user_id → user.
+// L'alias du résultat est déduit : user_id → user. `where` filtre le modèle joint.
 const withUser = await WorkspaceUserModel.findOne({
   attributes: ["workspace_id", "user_id", "role"] as const,
   where: { workspace_id: 1, user_id: user.id },
   include: [
     {
-      relation: "user_id",
       model: UserModel,
       attributes: ["id", "name", "status"] as const,
+      where: { status: "active" },
       required: true, // INNER JOIN ; sans lui, `user` peut être null
     },
   ] as const,

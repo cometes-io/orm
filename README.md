@@ -22,6 +22,8 @@ import { Orm } from "@cometes/orm";
 export const orm = new Orm({
   postgres: {
     url: process.env.POSTGRES_URL ?? "postgres://orm:orm@localhost:5432/orm",
+    // Empêche le pool / un Postgres serverless de couper la connexion
+    // keepAlive: true,
   },
   redis: {
     url: process.env.REDIS_URL ?? "redis://redis:6379",
@@ -83,6 +85,7 @@ console.log(await orm.ping());
 // Cache Redis et logs SQL (désactivés par défaut)
 orm.cache(false);
 orm.log(false);
+// orm.logTo(console.error); // sortie des logs SQL une fois `log(true)`
 
 // Création — les champs hors schéma sont ignorés,
 // created_at / updated_at / default sont remplis par l'ORM
@@ -121,6 +124,7 @@ await orm.disconnect();
 | `ping()` | État des connexions → `{ postgres, redis }`. |
 | `cache(bool)` | Active / coupe le cache Redis des lectures. |
 | `log(bool)` | Active / coupe les logs SQL. |
+| `logTo(fn)` | Destination des logs SQL (`console.log` par défaut). |
 | `begin()` / `commit()` / `rollback()` | Transaction du contexte async courant. |
 | `transaction(fn)` | Transaction isolée, commit / rollback automatiques. |
 | `lock(…)` / `unlock()` | Verrous PostgreSQL (dans une transaction). |
@@ -171,13 +175,18 @@ export const WorkspaceUserModel = orm.declareModel({
 
 const membership = await WorkspaceUserModel.findOne({
   include: [
-    { relation: "user_id", model: UserModel, attributes: ["id", "name"] as const },
+    {
+      model: UserModel,
+      attributes: ["id", "name"] as const,
+      where: { status: "active" },
+      required: true,
+    },
   ] as const,
 });
 // → { workspace_id: 1, user_id: 1, user: { id: 1, name: 'John Doe' } }
 ```
 
-L’alias est dérivé de la FK (`user_id` → `user`), ou fixé avec `references.as`. `required: true` passe le `LEFT JOIN` en `INNER JOIN`. Disponible sur `findOne` / `findAll` uniquement.
+L’alias est dérivé de la FK (`user_id` → `user`), ou fixé avec `references.as`. `required: true` passe le `LEFT JOIN` en `INNER JOIN`. `where` filtre le modèle joint. Un `include` peut contenir un autre `include` (jointures imbriquées). `relation` n’est utile que s’il y a plusieurs FK vers le même modèle.
 
 ### Transactions
 

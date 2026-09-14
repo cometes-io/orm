@@ -358,7 +358,6 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
         attributes: ["workspace_id", "role"] as const,
         include: [
           {
-            relation: "user_id",
             model: UserModel,
             attributes: ["id", "name"] as const,
           },
@@ -369,9 +368,7 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
     expectTypeOf<IncludedRow>().not.toBeNever();
     expectTypeOf<IncludedRow["workspace_id"]>().toEqualTypeOf<number>();
     expectTypeOf<IncludedRow["role"]>().toEqualTypeOf<string>();
-    expectTypeOf<IncludedRow["user"]>().toEqualTypeOf<
-      Partial<typeof UserModel.$schema> | null
-    >();
+    expectTypeOf<IncludedRow["user"]>().not.toBeNever();
   });
 
   it("déclare belongsTo et transmet l'include à Sequelize", async () => {
@@ -387,7 +384,6 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
       where: { workspace_id: 1 },
       include: [
         {
-          relation: "user_id",
           model: UserModel,
           attributes: ["id", "name"] as const,
           where: { status: "active" },
@@ -421,6 +417,156 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
       workspace_id: 1,
       user: { id: 2, name: "John" },
     });
+  });
+
+  it("exige relation s'il y a plusieurs FK vers le même modèle", async () => {
+    const { UserModel, queries } = declareModels();
+
+    const ReviewModel = orm.declareModel({
+      name: "reviews",
+      schema: {
+        author_id: {
+          type: "number",
+          references: { model: UserModel, key: "id" },
+        },
+        editor_id: {
+          type: "number",
+          references: { model: UserModel, key: "id" },
+        },
+      },
+    });
+
+    await expect(
+      ReviewModel.findOne({
+        include: [{ model: UserModel }] as const,
+      }),
+    ).rejects.toThrow(
+      'Several foreign keys reference "users" (author_id, editor_id); set relation',
+    );
+
+    await ReviewModel.findOne({
+      include: [{ model: UserModel, relation: "author_id" }] as const,
+    });
+    expect(queries.at(-1)).toMatchObject({
+      include: [{ association: "author" }],
+    });
+  });
+
+  it("type le where de l'include sur le modèle joint", () => {
+    const { UserModel, WorkspaceUserModel } = declareModels();
+
+    const query = () =>
+      WorkspaceUserModel.findOne({
+        include: [
+          {
+            model: UserModel,
+            where: { status: "active" },
+          },
+        ] as const,
+      });
+
+    expect(typeof query).toBe("function");
+  });
+
+  it("imbrique les include et infère user.company", async () => {
+    orm = new Orm({
+      postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+      redis: { url: "redis://localhost:6379" },
+    });
+
+    const queries: Record<string, unknown>[] = [];
+    orm.postgres.dbInstance!.define = ((name: string) => ({
+      getAttributes: () =>
+        name === "companies"
+          ? { id: {}, name: {}, deleted_at: {} }
+          : name === "users"
+            ? { id: {}, name: {}, company_id: {}, deleted_at: {} }
+            : { user_id: {}, role: {} },
+      belongsTo: () => undefined,
+      findOne: async (options: Record<string, unknown>) => {
+        queries.push(options);
+        return {
+          get: () => ({
+            role: "admin",
+            user: { id: 2, name: "Ada", company: { id: 1, name: "Cometes" } },
+          }),
+        };
+      },
+    })) as never;
+
+    const CompanyModel = orm.declareModel({
+      name: "companies",
+      schema: {
+        id: { type: "number", primary: true },
+        name: { type: "string" },
+        deleted_at: { type: "date", nullable: true },
+      },
+    });
+    const UserModel = orm.declareModel({
+      name: "users",
+      schema: {
+        id: { type: "number", primary: true },
+        name: { type: "string" },
+        company_id: {
+          type: "number",
+          references: { model: CompanyModel, key: "id" },
+        },
+        deleted_at: { type: "date", nullable: true },
+      },
+    });
+    const MemberModel = orm.declareModel({
+      name: "members",
+      schema: {
+        user_id: {
+          type: "number",
+          references: { model: UserModel, key: "id" },
+        },
+        role: { type: "string" },
+      },
+    });
+
+    const query = () =>
+      MemberModel.findOne({
+        attributes: ["role"] as const,
+        include: [
+          {
+            model: UserModel,
+            attributes: ["id", "name"] as const,
+            required: true,
+            include: [
+              {
+                model: CompanyModel,
+                attributes: ["id", "name"] as const,
+                required: true,
+              },
+            ] as const,
+          },
+        ] as const,
+      });
+
+    type NestedRow = NonNullable<Awaited<ReturnType<typeof query>>>;
+    type NestedCompany = NestedRow["user"]["company"];
+    const companyName: NestedCompany extends { name?: string } ? string : never =
+      "Cometes";
+    expect(companyName).toBe("Cometes");
+
+    const row = await query();
+    expect(queries[0]).toMatchObject({
+      include: [
+        {
+          association: "user",
+          required: true,
+          include: [
+            {
+              association: "company",
+              attributes: ["id", "name"],
+              required: true,
+            },
+          ],
+        },
+      ],
+    });
+    expect(row?.user.company.name).toBe("Cometes");
   });
 
   it("permet un alias explicite et refuse un modèle non déclaré", () => {

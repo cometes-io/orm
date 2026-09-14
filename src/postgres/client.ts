@@ -12,12 +12,72 @@ const TABLE_NAME_PART = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const isSafeTableName = (table: string): boolean =>
   table.length > 0 && table.split(".").every((part) => TABLE_NAME_PART.test(part));
 
+/** Intervalle par défaut du ping keep-alive (30 s). */
+export const POSTGRES_KEEP_ALIVE_INTERVAL_MS = 30_000;
+
+/**
+ * Ping périodique et pool Sequelize pour ne pas laisser Postgres
+ * (ou un NAT / un serveur serverless) couper la connexion.
+ */
+export type PostgresKeepAliveOptions = {
+  /** Intervalle du `SELECT 1`. Défaut : {@link POSTGRES_KEEP_ALIVE_INTERVAL_MS}. */
+  intervalMs?: number;
+};
+
 /**
  * Options de connexion PostgreSQL.
  */
 export type PostgresOptions = {
   url: string;
   options?: Options;
+  /**
+   * Garde le pool ouvert et ping Postgres pour éviter la mise en veille.
+   * `true` utilise un ping toutes les 30 s.
+   */
+  keepAlive?: boolean | PostgresKeepAliveOptions;
+};
+
+type NormalizedKeepAlive = false | { intervalMs: number };
+
+const normalizeKeepAlive = (
+  value: PostgresOptions["keepAlive"],
+): NormalizedKeepAlive => {
+  if (!value) {
+    return false;
+  }
+  const intervalMs =
+    value === true
+      ? POSTGRES_KEEP_ALIVE_INTERVAL_MS
+      : (value.intervalMs ?? POSTGRES_KEEP_ALIVE_INTERVAL_MS);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error("keepAlive.intervalMs must be a positive number");
+  }
+  return { intervalMs };
+};
+
+const sequelizeOptionsWithKeepAlive = (
+  options: Options,
+  intervalMs: number,
+): Options => {
+  const idleFloor = intervalMs * 2;
+  const dialectOptions = {
+    ...(options.dialectOptions as Record<string, unknown> | undefined),
+    keepAlive: true,
+    keepAliveInitialDelayMillis:
+      (options.dialectOptions as { keepAliveInitialDelayMillis?: number } | undefined)
+        ?.keepAliveInitialDelayMillis ?? 10_000,
+  };
+  return {
+    ...options,
+    pool: {
+      max: 5,
+      acquire: 60_000,
+      ...options.pool,
+      min: Math.max(options.pool?.min ?? 1, 1),
+      idle: Math.max(options.pool?.idle ?? idleFloor, idleFloor),
+    },
+    dialectOptions,
+  };
 };
 
 /**
@@ -28,11 +88,15 @@ export type PostgresOptions = {
 export class PostgresClient {
   readonly url: string;
   readonly options: Options;
+  /** `false` si le keep-alive est coupé. */
+  readonly keepAlive: NormalizedKeepAlive;
   dbInstance?: Sequelize;
+  #keepAliveTimer: ReturnType<typeof setInterval> | undefined = undefined;
 
   constructor(options: PostgresOptions = { url: "", options: {} as Options }) {
     this.url = options.url ?? "";
     this.options = options.options ?? {};
+    this.keepAlive = normalizeKeepAlive(options.keepAlive);
 
     this.connect();
   }
@@ -43,11 +107,32 @@ export class PostgresClient {
   }
 
   /**
-   * Instancie Sequelize. La connexion TCP a lieu au premier usage
-   * (`authenticate`, requête, `healthy()`).
+   * Instancie Sequelize. Sans `keepAlive`, la connexion TCP a lieu au
+   * premier usage. Avec `keepAlive`, authentifie tout de suite et ping.
    */
   async connect(): Promise<void> {
-    this.dbInstance = new Sequelize(this.url, this.options);
+    this.#stopKeepAlive();
+    const sequelizeOptions = this.keepAlive
+      ? sequelizeOptionsWithKeepAlive(this.options, this.keepAlive.intervalMs)
+      : this.options;
+    const sequelize = new Sequelize(this.url, sequelizeOptions);
+    this.dbInstance = sequelize;
+
+    if (!this.keepAlive) {
+      return;
+    }
+
+    try {
+      await sequelize.authenticate();
+    } catch {
+      // `healthy()` / `ping()` exposent l'échec ; le ping retentera.
+    }
+
+    if (this.dbInstance !== sequelize) {
+      return;
+    }
+
+    this.#startKeepAlive();
   }
 
   /**
@@ -106,11 +191,38 @@ export class PostgresClient {
 
   /** Ferme la connexion. */
   async disconnect(): Promise<void> {
+    this.#stopKeepAlive();
     if (!this.dbInstance) {
       return;
     }
     await this.dbInstance.close();
     delete this.dbInstance;
+  }
+
+  #startKeepAlive(): void {
+    if (!this.keepAlive) {
+      return;
+    }
+    this.#stopKeepAlive();
+    const intervalMs = this.keepAlive.intervalMs;
+    this.#keepAliveTimer = setInterval(() => {
+      const sequelize = this.dbInstance;
+      if (!sequelize) {
+        return;
+      }
+      void sequelize
+        .query("SELECT 1", { logging: false })
+        .catch(() => sequelize.authenticate().catch(() => undefined));
+    }, intervalMs);
+    this.#keepAliveTimer.unref();
+  }
+
+  #stopKeepAlive(): void {
+    if (!this.#keepAliveTimer) {
+      return;
+    }
+    clearInterval(this.#keepAliveTimer);
+    this.#keepAliveTimer = undefined;
   }
 
   /** Indique si le client est joignable (`authenticate`). */

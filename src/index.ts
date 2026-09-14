@@ -5,7 +5,7 @@
  *
  * @packageDocumentation
  */
-export { Orm, type OrmOptions } from "./orm.js";
+export { Orm, type OrmOptions, type SequelizeLogOutput } from "./orm.js";
 export {
   defineModel,
   Op,
@@ -38,7 +38,12 @@ export {
   type MigrateResult,
   type MigrationModule,
 } from "./migrate/index.js";
-export { PostgresClient, type PostgresOptions } from "./postgres/index.js";
+export {
+  PostgresClient,
+  POSTGRES_KEEP_ALIVE_INTERVAL_MS,
+  type PostgresKeepAliveOptions,
+  type PostgresOptions,
+} from "./postgres/index.js";
 export {
   RedisClient,
   REDIS_CACHE_TTL_SECONDS,

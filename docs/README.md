@@ -28,10 +28,15 @@ Autres pages : [Démarrage rapide](guide/getting-started.md) · [Migrations](gui
 import { Orm } from "@cometes/orm";
 
 const orm = new Orm({
-  postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+  postgres: {
+    url: "postgres://orm:orm@localhost:5432/orm",
+    keepAlive: true, // ping toutes les 30 s ; `{ intervalMs: 60_000 }` pour régler
+  },
   redis: { url: "redis://localhost:6379" }, // optionnel
 });
 ```
+
+`keepAlive` maintient au moins une connexion Sequelize et envoie un `SELECT 1` périodique, pour éviter qu’un NAT, un load balancer ou un Postgres serverless (mise en pause) ne coupe le socket. Coupé par défaut.
 
 | Méthode | Retour | Description |
 |---------|--------|-------------|
@@ -40,6 +45,7 @@ const orm = new Orm({
 | `ping()` | `{ postgres, redis }` | Test de santé des deux clients. |
 | `cache(bool)` | — | Active / coupe le cache Redis des lectures (défaut : coupé). |
 | `log(bool)` | — | Active / coupe les logs SQL (défaut : coupés). |
+| `logTo(fn)` | — | Fonction qui reçoit le SQL (`console.log` par défaut). N’active pas les logs. |
 | `begin()` | `Transaction` | Ouvre une transaction dans le contexte async courant. |
 | `transaction(fn)` | `T` | Isole `fn` : commit si succès, rollback si erreur. |
 | `commit(tx?)` / `rollback(tx?)` | — | Termine la transaction courante ou celle passée. |
@@ -205,32 +211,35 @@ const membership = await WorkspaceUserModel.findOne({
   where: { workspace_id: 1 },
   include: [
     {
-      relation: "user_id",
       model: UserModel,
       attributes: ["id", "name", "status"] as const,
+      where: { status: "active" },
       required: true,
+      include: [
+        {
+          model: CompanyModel,
+          attributes: ["id", "name"] as const,
+          required: true,
+        },
+      ] as const,
     },
   ] as const,
 });
-// → {
-//     workspace_id: 1,
-//     user_id: 1,
-//     role: 'member',
-//     user: { id: 1, name: 'John Doe', status: 'active' }
-//   }
+// membership.user.company.name
 ```
 
 | Clé | Rôle |
 |-----|------|
-| `relation` | Le champ FK du schéma courant (ici `user_id`). |
-| `model` | Le modèle référencé ; il doit correspondre à celui de `references`. |
+| `model` | Le modèle à joindre (doit correspondre à une FK `references`). |
+| `where` | Filtre sur le modèle inclus (soft delete inclus). |
 | `attributes` | Colonnes à charger ; la ligne jointe est alors typée comme partielle. |
-| `where` | Filtre sur le modèle inclus. |
 | `required` | `true` → `INNER JOIN` ; `false` (défaut) → `LEFT JOIN`, et la valeur peut être `null`. |
+| `include` | Jointures imbriquées sur le modèle inclus (même forme, récursif). |
+| `relation` | Champ FK, seulement s’il y a **plusieurs** FK vers le même modèle. |
 
 La ligne jointe est imbriquée sous l’alias, jamais aplatie dans le résultat. Le soft delete (`deleted_at: null`) est aussi appliqué au modèle inclus.
 
-Les includes imbriqués et les relations `hasMany` / `belongsToMany` ne font pas partie de cette version. Toute requête avec `include` contourne le cache Redis.
+Les `include` se composent à l’infini (`include` dans un `include`). Les relations `hasMany` / `belongsToMany` ne font pas partie de cette version. Toute requête avec `include` contourne le cache Redis.
 
 ## Timestamps et soft delete
 

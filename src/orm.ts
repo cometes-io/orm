@@ -17,6 +17,9 @@ type AsyncContext = {
   lock: Exclude<LockClause, false> | null;
 };
 
+/** Fonction qui reçoit le SQL journalisé par Sequelize. */
+export type SequelizeLogOutput = (sql: string, timing?: number) => void;
+
 /**
  * Options de configuration d'une instance {@link Orm}.
  */
@@ -51,6 +54,8 @@ export class Orm {
   cacheEnabled: boolean = false;
   /** Si `true`, Sequelize journalise le SQL. */
   logEnabled: boolean = false;
+  /** Destination des logs SQL (`console.log` par défaut). */
+  #logOutput: SequelizeLogOutput = console.log;
   /**
    * Contexte async (requête HTTP, `begin()`, `transaction()`).
    * Deux `begin()` en parallèle n'écrasent plus la même case mémoire.
@@ -152,9 +157,18 @@ export class Orm {
     this.logEnabled = value;
   }
 
-  /** Option `logging` Sequelize dérivée de `logEnabled`. */
-  private sequelizeLogging(): false | ((sql: string) => void) {
-    return this.logEnabled ? console.log : false;
+  /**
+   * Choisit où Sequelize envoie le SQL (`console.log` par défaut).
+   *
+   * N’active pas les logs : appeler aussi {@link Orm.log}.
+   */
+  logTo(output: SequelizeLogOutput): void {
+    this.#logOutput = output;
+  }
+
+  /** Option `logging` Sequelize dérivée de `logEnabled` et {@link Orm.logTo}. */
+  sequelizeLogging(): false | SequelizeLogOutput {
+    return this.logEnabled ? this.#logOutput : false;
   }
 
   /**

@@ -5,7 +5,7 @@ import { UserModel } from "./users.js";
  * Table de liaison workspace ↔ user.
  *
  * `user_id` porte une clé étrangère vers `users.id` : c'est elle qui rend
- * possible `include: [{ relation: "user_id", model: UserModel }]`.
+ * possible `include: [{ model: UserModel }]`.
  * `UserModel` doit donc être déclaré avant ce modèle.
  *
  * La clé primaire est composite (`workspace_id` + `user_id`) : aucune colonne

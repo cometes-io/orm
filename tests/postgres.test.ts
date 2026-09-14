@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Sequelize } from "sequelize";
 import { PostgresClient } from "../src/index.js";
 import { POSTGRES_URL, postgresReachable } from "./helpers/services.js";
 
@@ -11,11 +12,60 @@ describe("PostgresClient", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await client.disconnect();
   });
 
-  it("applique l'url fournie", () => {
-    expect(client.url).toBe(POSTGRES_URL);
+  it("refuse keepAlive.intervalMs invalide", () => {
+    expect(
+      () =>
+        new PostgresClient({
+          url: POSTGRES_URL,
+          keepAlive: { intervalMs: 0 },
+        }),
+    ).toThrow("keepAlive.intervalMs must be a positive number");
+  });
+
+  it("keepAlive maintient le pool et ping jusqu'à disconnect", async () => {
+    await client.disconnect();
+    const authenticate = vi
+      .spyOn(Sequelize.prototype, "authenticate")
+      .mockResolvedValue(undefined);
+    vi.useFakeTimers();
+
+    client = new PostgresClient({
+      url: POSTGRES_URL,
+      keepAlive: { intervalMs: 5_000 },
+      options: { pool: { max: 8 } },
+    });
+    await client.connect();
+
+    expect(client.keepAlive).toEqual({ intervalMs: 5_000 });
+    const sequelizeOptions = client.dbInstance as unknown as {
+      options: {
+        pool: { min?: number; max?: number; idle?: number };
+        dialectOptions: { keepAlive?: boolean };
+      };
+    };
+    expect(sequelizeOptions.options.pool).toEqual(
+      expect.objectContaining({ min: 1, max: 8, idle: 10_000 }),
+    );
+    expect(sequelizeOptions.options.dialectOptions).toEqual(
+      expect.objectContaining({ keepAlive: true }),
+    );
+
+    const query = vi
+      .spyOn(client.dbInstance!, "query")
+      .mockResolvedValue([[], undefined] as never);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(query).toHaveBeenCalledWith("SELECT 1", { logging: false });
+
+    await client.disconnect();
+    query.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(query).not.toHaveBeenCalled();
+    authenticate.mockRestore();
   });
 
   it("refuse query et begin sans connexion", async () => {

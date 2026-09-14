@@ -149,18 +149,54 @@ type ReferenceAlias<
     ? TAlias
     : TField;
 
+type ReferencedModelOf<
+  TSchema extends Record<string, DefineModelSchema>,
+  TField extends ReferenceFieldKeys<TSchema>,
+> = TSchema[TField] extends {
+  references: { model: infer TModel extends ReferencedModelShape };
+}
+  ? TModel
+  : never;
+
+type RelationFieldForModel<
+  TSchema extends Record<string, DefineModelSchema>,
+  TModel,
+> = {
+  [K in ReferenceFieldKeys<TSchema>]: TSchema[K] extends {
+    references: { model: TModel };
+  }
+    ? K
+    : never;
+}[ReferenceFieldKeys<TSchema>];
+
+type IncludeRelationField<
+  TSchema extends Record<string, DefineModelSchema>,
+  TInclude extends IncludeOption<TSchema>,
+> = TInclude extends {
+  relation: infer TField extends ReferenceFieldKeys<TSchema>;
+}
+  ? TField
+  : TInclude extends { model: infer TModel }
+    ? RelationFieldForModel<TSchema, TModel>
+    : never;
+
 type IncludeOptionForField<
   TSchema extends Record<string, DefineModelSchema>,
   TField extends ReferenceFieldKeys<TSchema>,
-  TModel extends ReferencedModelShape = ReferencedModelShape,
 > = {
-  relation: TField;
-  /** Le modèle doit correspondre à `schema[relation].references.model`. */
-  model: TModel;
-  attributes?: AttributeKeys<TModel["schema"]>;
-  where?: WhereClause<TModel["schema"]>;
+  /** Le modèle ciblé par `schema[relation].references`. */
+  model: ReferencedModelOf<TSchema, TField>;
+  /**
+   * Champ FK. Inutile s'il n'y a qu'une FK vers `model` :
+   * déduit de `references.model`.
+   */
+  relation?: TField;
+  attributes?: AttributeKeys<ReferencedModelOf<TSchema, TField>["schema"]>;
+  where?: WhereClause<ReferencedModelOf<TSchema, TField>["schema"]>;
   /** `true` génère un INNER JOIN ; `false` (défaut) un LEFT JOIN. */
   required?: boolean;
+  /** Jointures imbriquées sur le modèle inclus. */
+  include?: IncludeClause<ReferencedModelOf<TSchema, TField>["schema"]>;
 };
 
 /** Include disponible à partir des champs du schéma ayant `references`. */
@@ -180,7 +216,7 @@ export type IncludeClause<
 type IncludedItemValue<
   TSchema extends Record<string, DefineModelSchema>,
   TInclude extends IncludeOption<TSchema>,
-> = TInclude["relation"] extends infer TField extends
+> = IncludeRelationField<TSchema, TInclude> extends infer TField extends
   ReferenceFieldKeys<TSchema>
   ? TSchema[TField] extends {
       references: {
@@ -189,9 +225,25 @@ type IncludedItemValue<
         };
       };
     }
-    ? TInclude extends { readonly attributes: readonly unknown[] }
-      ? Partial<TValues>
-      : TValues
+    ? (TInclude extends { readonly attributes: readonly unknown[] }
+        ? Partial<TValues>
+        : TValues) &
+        (TInclude extends {
+          model: {
+            schema: infer TNestedSchema extends Record<
+              string,
+              DefineModelSchema
+            >;
+          };
+        }
+          ? "include" extends keyof TInclude
+            ? TInclude extends {
+                include: infer TNested extends IncludeClause<TNestedSchema>;
+              }
+              ? IncludedValues<TNestedSchema, TNested>
+              : Record<never, never>
+            : Record<never, never>
+          : Record<never, never>)
     : never
   : never;
 
@@ -200,9 +252,10 @@ export type IncludedValues<
   TSchema extends Record<string, DefineModelSchema>,
   TIncludes extends IncludeClause<TSchema>,
 > = {
-  [TInclude in TIncludes[number] as TInclude extends {
-    relation: infer TField extends ReferenceFieldKeys<TSchema>;
-  }
+  [TInclude in TIncludes[number] as IncludeRelationField<
+    TSchema,
+    TInclude
+  > extends infer TField extends ReferenceFieldKeys<TSchema>
     ? ReferenceAlias<TSchema, TField>
     : never]: TInclude extends { required: true }
     ? IncludedItemValue<TSchema, TInclude>
@@ -640,6 +693,34 @@ const sequelizeModels = new WeakMap<object, ModelStatic<SequelizeModel>>();
 const referenceAlias = (field: string, reference: ModelReference): string =>
   reference.as ?? (field.endsWith("_id") ? field.slice(0, -3) : field);
 
+/** Champ FK d'un include : `relation` ou unique `references.model` correspondant. */
+const resolveIncludeField = (
+  schema: Record<string, DefineModelSchema>,
+  include: { model: ReferencedModelShape; relation?: string },
+): string => {
+  if (include.relation !== undefined) {
+    return include.relation;
+  }
+
+  const matches = Object.keys(schema).filter(
+    (name) => schema[name]?.references?.model === include.model,
+  );
+
+  if (matches.length === 0) {
+    throw new Error(
+      `No foreign key references model "${include.model.name}"`,
+    );
+  }
+
+  if (matches.length > 1) {
+    throw new Error(
+      `Several foreign keys reference "${include.model.name}" (${matches.join(", ")}); set relation`,
+    );
+  }
+
+  return matches[0]!;
+};
+
 /** Traduit nos `include` ORM en `include` Sequelize. */
 const formatIncludes = <
   TSchema extends Record<string, DefineModelSchema>,
@@ -652,17 +733,14 @@ const formatIncludes = <
   }
 
   return includes.map((include) => {
-    const descriptor = schema[include.relation];
+    const field = resolveIncludeField(schema, include);
+    const descriptor = schema[field];
     const reference = descriptor?.references;
     if (!reference) {
-      throw new Error(
-        `Field "${include.relation}" is not a declared foreign key`,
-      );
+      throw new Error(`Field "${field}" is not a declared foreign key`);
     }
     if (include.model !== reference.model) {
-      throw new Error(
-        `Included model does not match foreign key "${include.relation}"`,
-      );
+      throw new Error(`Included model does not match foreign key "${field}"`);
     }
 
     const target = sequelizeModels.get(reference.model);
@@ -679,8 +757,13 @@ const formatIncludes = <
         | undefined,
     );
 
+    const nested = formatIncludes(
+      reference.model.schema as Record<string, DefineModelSchema>,
+      include.include as IncludeClause<Record<string, DefineModelSchema>> | undefined,
+    );
+
     return {
-      association: referenceAlias(include.relation, reference),
+      association: referenceAlias(field, reference),
       ...(include.attributes
         ? {
             attributes: Array.from(include.attributes, String).filter(
@@ -689,6 +772,7 @@ const formatIncludes = <
           }
         : {}),
       ...(where ? { where } : {}),
+      ...(nested ? { include: nested } : {}),
       required: include.required ?? false,
     };
   });
@@ -703,8 +787,7 @@ const plainValue = <T>(value: T): T =>
     ? (value.get({ plain: true }) as T)
     : value;
 
-const sequelizeLogging = (orm: Orm) =>
-  orm.logEnabled ? console.log : false;
+const sequelizeLogging = (orm: Orm) => orm.sequelizeLogging();
 
 const invalidateCache = async (orm: Orm, modelName: string) => {
   if (orm.cacheEnabled && orm.redis) {

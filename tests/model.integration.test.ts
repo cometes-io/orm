@@ -185,7 +185,6 @@ describe.skipIf(!postgresReachable)("Model (intégration SQL)", () => {
       where: { workspace_id: 9, user_id: person.id },
       include: [
         {
-          relation: "user_id",
           model: PersonModel,
           attributes: ["id", "name"] as const,
           required: true,

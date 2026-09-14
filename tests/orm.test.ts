@@ -65,6 +65,51 @@ describe("Orm", () => {
   );
 });
 
+describe("Orm.log / logTo", () => {
+  let orm: Orm;
+
+  afterEach(async () => {
+    if (orm) {
+      await orm.disconnect().catch(() => undefined);
+    }
+  });
+
+  it("coupe les logs par défaut et les envoie à console.log", () => {
+    orm = new Orm({
+      postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+    });
+
+    expect(orm.sequelizeLogging()).toBe(false);
+
+    orm.log(true);
+    expect(orm.sequelizeLogging()).toBe(console.log);
+
+    orm.log(false);
+    expect(orm.sequelizeLogging()).toBe(false);
+  });
+
+  it("redirige le SQL vers la fonction passée à logTo", () => {
+    orm = new Orm({
+      postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+    });
+    const lines: string[] = [];
+    const output = (sql: string) => {
+      lines.push(sql);
+    };
+
+    orm.logTo(output);
+    expect(orm.sequelizeLogging()).toBe(false);
+
+    orm.log(true);
+    const logging = orm.sequelizeLogging();
+    expect(logging).toBe(output);
+    if (logging) {
+      logging("SELECT 1");
+    }
+    expect(lines).toEqual(["SELECT 1"]);
+  });
+});
+
 describe("Orm.begin / commit / rollback", () => {
   let orm: Orm;
 
