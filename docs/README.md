@@ -36,25 +36,33 @@ const orm = new Orm({
 });
 ```
 
-`keepAlive` maintient au moins une connexion Sequelize et envoie un `SELECT 1` périodique, pour éviter qu’un NAT, un load balancer ou un Postgres serverless (mise en pause) ne coupe le socket. Coupé par défaut.
+Pour MySQL / MariaDB, remplacer `postgres` par `mysql` (les deux à la fois lèvent une erreur) :
+
+```ts
+const orm = new Orm({
+  mysql: { url: "mysql://orm:orm@localhost:3306/orm" },
+});
+```
+
+Le client Sequelize reste `orm.postgres` (`orm.postgres.dialect` vaut `"mysql"`). `keepAlive` maintient au moins une connexion Sequelize et envoie un `SELECT 1` périodique, pour éviter qu’un NAT, un load balancer ou un Postgres / MySQL serverless (mise en pause) ne coupe le socket. Coupé par défaut.
 
 | Méthode | Retour | Description |
 |---------|--------|-------------|
 | `declareModel({ name, schema })` | `Model` | Déclare un modèle. |
 | `migrate(dossier)` | `{ applied, skipped }` | Applique les migrations `*.ts` du dossier (tri alphabétique). |
-| `ping()` | `{ postgres, redis }` | Test de santé des deux clients. |
+| `ping()` | `{ postgres, mysql, redis }` | Test de santé. Seul le dialecte configuré est sondé. |
 | `cache(bool)` | — | Active / coupe le cache Redis des lectures (défaut : coupé). |
 | `log(bool)` | — | Active / coupe les logs SQL (défaut : coupés). |
 | `logTo(fn)` | — | Fonction qui reçoit le SQL (`console.log` par défaut). N’active pas les logs. |
 | `begin()` | `Transaction` | Ouvre une transaction dans le contexte async courant. |
 | `transaction(fn)` | `T` | Isole `fn` : commit si succès, rollback si erreur. |
 | `commit(tx?)` / `rollback(tx?)` | — | Termine la transaction courante ou celle passée. |
-| `lock(…)` / `unlock()` | — | Verrous PostgreSQL (voir [Locks](#locks)). |
+| `lock(…)` / `unlock()` | — | Verrous SQL (voir [Locks](#locks)). |
 | `connect()` / `disconnect()` | — | Ouvre / ferme les connexions. |
 
 Propriétés utiles : `orm.postgres`, `orm.redis` (`url`, `dbInstance`, `connected`, `healthy()`), `orm.models`, `orm.currentTransaction`, `orm.currentLock`.
 
-`postgres.connected` signifie « instance Sequelize créée ». `redis.connected` signifie « socket Redis ouvert ». `ping()` / `healthy()` testent vraiment le réseau.
+`postgres.connected` signifie « instance Sequelize créée ». `orm.postgres.dialect` indique `postgres` ou `mysql`. `redis.connected` signifie « socket Redis ouvert ». `ping()` / `healthy()` testent vraiment le réseau.
 
 Sans configuration Redis, tout fonctionne : seul le cache est indisponible.
 
@@ -321,7 +329,7 @@ Une lecture filtrée n’est jamais cachée : la donnée reste fraîche, et le c
 
 ## Transactions
 
-`orm.begin()` ouvre une transaction PostgreSQL **dans le contexte async courant** (requête HTTP, tâche). Un seul `begin()` à la fois : un second appel en parallèle lève `Concurrent begin() is not supported; use orm.transaction(fn)`. `orm.transaction(fn)` isole chaque appel (commit si `fn` réussit, rollback sinon) et **peut** tourner en parallèle.
+`orm.begin()` ouvre une transaction SQL **dans le contexte async courant** (requête HTTP, tâche). Un seul `begin()` à la fois : un second appel en parallèle lève `Concurrent begin() is not supported; use orm.transaction(fn)`. `orm.transaction(fn)` isole chaque appel (commit si `fn` réussit, rollback sinon) et **peut** tourner en parallèle.
 
 ```ts
 await orm.transaction(async () => {
@@ -337,14 +345,14 @@ On peut aussi passer `transaction` explicitement à chaque appel. Un second `beg
 
 ## Locks
 
-Les verrous PostgreSQL s’utilisent **dans une transaction** ; ils sont libérés au `commit` / `rollback`. Un lock sans transaction lève une erreur.
+Les verrous s’utilisent **dans une transaction** ; ils sont libérés au `commit` / `rollback`. Un lock sans transaction lève une erreur.
 
 | Appel | Effet |
 |-------|-------|
 | `orm.lock()` | `SELECT … FOR UPDATE` sur les lectures suivantes. |
 | `orm.lock("SHARE")` | Idem avec un autre mode. |
 | `orm.unlock()` | Retire le verrou de lignes courant. |
-| `orm.lock({ table, mode? })` | `LOCK TABLE … IN <mode> MODE` (défaut `EXCLUSIVE`). |
+| `orm.lock({ table, mode? })` | Postgres : `LOCK TABLE … IN <mode> MODE` (défaut `EXCLUSIVE`). MySQL : `LOCK TABLES … WRITE` (ou `READ` pour les modes SHARE). |
 | `findOne` / `findAll` avec `lock` | Verrou pour cet appel ; `false` désactive le verrou courant. |
 
 Modes de lignes : `true`, `"UPDATE"`, `"SHARE"`, `"KEY SHARE"`, `"NO KEY UPDATE"`.
@@ -374,5 +382,5 @@ La référence publique est décrite en **TSDoc** dans `src/`. Les exports stabl
 
 - Cœur : `Orm`, `defineModel`, `Op`, `runMigrations`
 - Clients : `PostgresClient`, `RedisClient`, `REDIS_CACHE_TTL_SECONDS`, `REDIS_KEY_PREFIX`
-- Types : `InferValues`, `SelectedValues`, `PrimaryKeyArg`, `WhereClause`, `OrderClause`, `IncludeClause`, `IncludedValues`, `ModelReference`, `LockClause`, `LockTableOptions`, `TableLockMode`, `Transaction`, …
+- Types : `InferValues`, `SelectedValues`, `PrimaryKeyArg`, `WhereClause`, `OrderClause`, `IncludeClause`, `IncludedValues`, `ModelReference`, `LockClause`, `LockTableOptions`, `TableLockMode`, `Transaction`, `MysqlOptions`, `SqlDialect`, …
 - Constantes : `TABLE_LOCK_MODES`

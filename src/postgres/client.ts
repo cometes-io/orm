@@ -16,7 +16,7 @@ const isSafeTableName = (table: string): boolean =>
 export const POSTGRES_KEEP_ALIVE_INTERVAL_MS = 30_000;
 
 /**
- * Ping périodique et pool Sequelize pour ne pas laisser Postgres
+ * Ping périodique et pool Sequelize pour ne pas laisser la base
  * (ou un NAT / un serveur serverless) couper la connexion.
  */
 export type PostgresKeepAliveOptions = {
@@ -24,17 +24,35 @@ export type PostgresKeepAliveOptions = {
   intervalMs?: number;
 };
 
+/** Dialecte SQL géré par le client Sequelize. */
+export type SqlDialect = "postgres" | "mysql";
+
 /**
- * Options de connexion PostgreSQL.
+ * Options de connexion SQL (PostgreSQL ou MySQL).
  */
 export type PostgresOptions = {
   url: string;
+  /**
+   * Forcé par `new Orm({ mysql })` / `new Orm({ postgres })`.
+   * Sinon déduit de l'URL (`mysql://` → mysql).
+   */
+  dialect?: SqlDialect;
   options?: Options;
   /**
-   * Garde le pool ouvert et ping Postgres pour éviter la mise en veille.
+   * Garde le pool ouvert et ping la base pour éviter la mise en veille.
    * `true` utilise un ping toutes les 30 s.
    */
   keepAlive?: boolean | PostgresKeepAliveOptions;
+};
+
+/** Options de connexion MySQL / MariaDB — même forme que {@link PostgresOptions}. */
+export type MysqlOptions = PostgresOptions;
+
+const inferDialect = (url: string, explicit?: SqlDialect): SqlDialect => {
+  if (explicit) {
+    return explicit;
+  }
+  return /^(mysql|mariadb):/i.test(url) ? "mysql" : "postgres";
 };
 
 type NormalizedKeepAlive = false | { intervalMs: number };
@@ -58,15 +76,25 @@ const normalizeKeepAlive = (
 const sequelizeOptionsWithKeepAlive = (
   options: Options,
   intervalMs: number,
+  dialect: SqlDialect,
 ): Options => {
   const idleFloor = intervalMs * 2;
-  const dialectOptions = {
-    ...(options.dialectOptions as Record<string, unknown> | undefined),
-    keepAlive: true,
-    keepAliveInitialDelayMillis:
-      (options.dialectOptions as { keepAliveInitialDelayMillis?: number } | undefined)
-        ?.keepAliveInitialDelayMillis ?? 10_000,
-  };
+  const existing = options.dialectOptions as Record<string, unknown> | undefined;
+  const dialectOptions =
+    dialect === "mysql"
+      ? {
+          ...existing,
+          enableKeepAlive: true,
+          keepAliveInitialDelay:
+            (existing?.keepAliveInitialDelay as number | undefined) ?? 10_000,
+        }
+      : {
+          ...existing,
+          keepAlive: true,
+          keepAliveInitialDelayMillis:
+            (existing?.keepAliveInitialDelayMillis as number | undefined) ??
+            10_000,
+        };
   return {
     ...options,
     pool: {
@@ -88,6 +116,8 @@ const sequelizeOptionsWithKeepAlive = (
 export class PostgresClient {
   readonly url: string;
   readonly options: Options;
+  /** Dialecte Sequelize (`postgres` ou `mysql`). */
+  readonly dialect: SqlDialect;
   /** `false` si le keep-alive est coupé. */
   readonly keepAlive: NormalizedKeepAlive;
   dbInstance?: Sequelize;
@@ -96,6 +126,7 @@ export class PostgresClient {
   constructor(options: PostgresOptions = { url: "", options: {} as Options }) {
     this.url = options.url ?? "";
     this.options = options.options ?? {};
+    this.dialect = inferDialect(this.url, options.dialect);
     this.keepAlive = normalizeKeepAlive(options.keepAlive);
 
     this.connect();
@@ -113,9 +144,16 @@ export class PostgresClient {
   async connect(): Promise<void> {
     this.#stopKeepAlive();
     const sequelizeOptions = this.keepAlive
-      ? sequelizeOptionsWithKeepAlive(this.options, this.keepAlive.intervalMs)
+      ? sequelizeOptionsWithKeepAlive(
+          this.options,
+          this.keepAlive.intervalMs,
+          this.dialect,
+        )
       : this.options;
-    const sequelize = new Sequelize(this.url, sequelizeOptions);
+    const sequelize = new Sequelize(this.url, {
+      ...sequelizeOptions,
+      dialect: this.dialect,
+    });
     this.dbInstance = sequelize;
 
     if (!this.keepAlive) {
@@ -163,7 +201,7 @@ export class PostgresClient {
     return this.dbInstance.transaction({ logging });
   }
 
-  /** `LOCK TABLE … IN <mode> MODE` (dans une transaction). */
+  /** `LOCK TABLE` Postgres, ou `LOCK TABLES` MySQL (dans une transaction). */
   async lockTable(
     table: string,
     mode: TableLockMode,
@@ -181,9 +219,13 @@ export class PostgresClient {
     }
     const quoted = table
       .split(".")
-      .map((part) => `"${part}"`)
+      .map((part) => quoteIdentifier(part, this.dialect))
       .join(".");
-    await this.dbInstance.query(`LOCK TABLE ${quoted} IN ${mode} MODE`, {
+    const sql =
+      this.dialect === "mysql"
+        ? `LOCK TABLES ${quoted} ${mysqlLockType(mode)}`
+        : `LOCK TABLE ${quoted} IN ${mode} MODE`;
+    await this.dbInstance.query(sql, {
       transaction,
       logging,
     });
@@ -297,6 +339,15 @@ export class PostgresClient {
     return columns.filter((column) => Boolean(attributes[column]));
   }
 }
+
+const quoteIdentifier = (part: string, dialect: SqlDialect): string =>
+  dialect === "mysql" ? `\`${part}\`` : `"${part}"`;
+
+/** MySQL n'a que READ / WRITE ; les modes Postgres SHARE se mappent sur READ. */
+const mysqlLockType = (mode: TableLockMode): "READ" | "WRITE" =>
+  mode === "ACCESS SHARE" || mode === "ROW SHARE" || mode === "SHARE"
+    ? "READ"
+    : "WRITE";
 
 const toSequelizeDataType = (type: string) => {
   switch (type) {

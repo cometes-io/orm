@@ -9,7 +9,7 @@ import {
   type LockTableOptions,
 } from "./model/model.js";
 import { runMigrations, type MigrateResult } from "./migrate/index.js";
-import { PostgresClient, type PostgresOptions } from "./postgres/index.js";
+import { PostgresClient, type MysqlOptions, type PostgresOptions } from "./postgres/index.js";
 import { RedisClient, type RedisOptions } from "./redis/index.js";
 
 type AsyncContext = {
@@ -24,8 +24,10 @@ export type SequelizeLogOutput = (sql: string, timing?: number) => void;
  * Options de configuration d'une instance {@link Orm}.
  */
 export type OrmOptions = {
-  /** Options PostgreSQL (persistance). */
+  /** Options PostgreSQL (persistance). Incompatible avec {@link OrmOptions.mysql}. */
   postgres?: PostgresOptions;
+  /** Options MySQL / MariaDB. Incompatible avec {@link OrmOptions.postgres}. */
+  mysql?: MysqlOptions;
   /** Options Redis (cache / files). */
   redis?: RedisOptions;
 };
@@ -39,6 +41,10 @@ export type OrmOptions = {
  * ```ts
  * const orm = new Orm({
  *   postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+ * });
+ * // ou MySQL :
+ * const mysqlOrm = new Orm({
+ *   mysql: { url: "mysql://orm:orm@localhost:3306/orm" },
  * });
  * await orm.migrate("./migrations");
  * ```
@@ -100,18 +106,32 @@ export class Orm {
    * @param options - Configuration optionnelle
    */
   constructor(options: OrmOptions = {}) {
-    this.postgres = new PostgresClient(options.postgres);
+    if (options.postgres && options.mysql) {
+      throw new Error("Use either postgres or mysql, not both");
+    }
+    this.postgres = new PostgresClient(
+      options.mysql
+        ? { ...options.mysql, dialect: "mysql" }
+        : options.postgres,
+    );
     this.redis = new RedisClient(options.redis);
   }
 
   /**
    * Vérifie que l'instance répond.
    *
-   * @returns État de santé postgres / redis
+   * `postgres` / `mysql` : seul le dialecte configuré est sondé, l'autre vaut `false`.
    */
-  async ping(): Promise<{ postgres: boolean; redis: boolean }> {
+  async ping(): Promise<{
+    postgres: boolean;
+    mysql: boolean;
+    redis: boolean;
+  }> {
+    const sql = await this.postgres.healthy();
+    const mysql = this.postgres.dialect === "mysql";
     return {
-      postgres: await this.postgres.healthy(),
+      postgres: mysql ? false : sql,
+      mysql: mysql ? sql : false,
       redis: await this.redis.healthy(),
     };
   }

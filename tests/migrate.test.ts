@@ -52,7 +52,7 @@ describe("runMigrations", () => {
       }),
     };
 
-    const client = { dbInstance: sequelize } as unknown as PostgresClient;
+    const client = { dbInstance: sequelize, dialect: "postgres" } as unknown as PostgresClient;
 
     const first = await runMigrations(client, { directory });
     expect(first.applied).toEqual(["001_first.ts", "002_second.ts"]);

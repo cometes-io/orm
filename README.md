@@ -1,6 +1,6 @@
 # @cometes/orm
 
-ORM pour Node.js (TypeScript) — PostgreSQL en persistance, Redis en cache optionnel.
+ORM pour Node.js (TypeScript) — PostgreSQL ou MySQL en persistance, Redis en cache optionnel.
 
 Vous décrivez vos tables une seule fois ; les types TypeScript des lignes en sont déduits automatiquement.
 
@@ -25,6 +25,8 @@ export const orm = new Orm({
     // Empêche le pool / un Postgres serverless de couper la connexion
     // keepAlive: true,
   },
+  // À la place de `postgres` :
+  // mysql: { url: process.env.MYSQL_URL ?? "mysql://orm:orm@localhost:3306/orm" },
   redis: {
     url: process.env.REDIS_URL ?? "redis://redis:6379",
   },
@@ -80,7 +82,7 @@ Voir [Migrations](docs/guide/migrations.md) pour le format des fichiers.
 ```ts
 // Santé des connexions
 console.log(await orm.ping());
-// → { postgres: true, redis: true }
+// → { postgres: true, mysql: false, redis: true }
 
 // Cache Redis et logs SQL (désactivés par défaut)
 orm.cache(false);
@@ -121,15 +123,15 @@ await orm.disconnect();
 |---------|-------------|
 | `declareModel({ name, schema })` | Déclare un modèle et renvoie son API. |
 | `migrate(dossier)` | Applique les migrations → `{ applied, skipped }`. |
-| `ping()` | État des connexions → `{ postgres, redis }`. |
+| `ping()` | État des connexions → `{ postgres, mysql, redis }`. |
 | `cache(bool)` | Active / coupe le cache Redis des lectures. |
 | `log(bool)` | Active / coupe les logs SQL. |
 | `logTo(fn)` | Destination des logs SQL (`console.log` par défaut). |
 | `begin()` / `commit()` / `rollback()` | Transaction du contexte async courant. |
 | `transaction(fn)` | Transaction isolée, commit / rollback automatiques. |
-| `lock(…)` / `unlock()` | Verrous PostgreSQL (dans une transaction). |
+| `lock(…)` / `unlock()` | Verrous SQL (dans une transaction). |
 | `connect()` / `disconnect()` | Ouverture / fermeture des connexions. |
-| `orm.postgres` / `orm.redis` | Clients sous-jacents. |
+| `orm.postgres` / `orm.redis` | Clients SQL (Postgres ou MySQL) et Redis. |
 
 ### Modèle
 

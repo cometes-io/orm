@@ -21,6 +21,7 @@ import { Orm } from "@cometes-io/orm";
 
 const orm = new Orm({
   postgres: { url: "postgres://orm:orm@localhost:5432/orm" },
+  // mysql: { url: "mysql://orm:orm@localhost:3306/orm" },
 });
 await orm.migrate("./migrations");
 console.log(await orm.ping());

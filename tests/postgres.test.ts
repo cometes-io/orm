@@ -177,6 +177,31 @@ describe("PostgresClient", () => {
       "inactive",
     );
   });
+
+  it("déduit mysql depuis l'URL et génère LOCK TABLES", async () => {
+    await client.disconnect();
+    client = new PostgresClient({
+      url: "mysql://orm:orm@localhost:3306/orm",
+    });
+    expect(client.dialect).toBe("mysql");
+
+    const query = vi
+      .spyOn(client.dbInstance!, "query")
+      .mockResolvedValue([[], undefined] as never);
+    const transaction = {} as never;
+
+    await client.lockTable("users", "EXCLUSIVE", transaction);
+    expect(query).toHaveBeenCalledWith("LOCK TABLES `users` WRITE", {
+      transaction,
+      logging: false,
+    });
+
+    await client.lockTable("users", "SHARE", transaction);
+    expect(query).toHaveBeenCalledWith("LOCK TABLES `users` READ", {
+      transaction,
+      logging: false,
+    });
+  });
 });
 
 // Nécessite un PostgreSQL joignable : ignoré si le port ne répond pas.

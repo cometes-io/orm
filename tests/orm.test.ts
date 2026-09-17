@@ -24,7 +24,27 @@ describe("Orm", () => {
     });
 
     expect(orm.postgres.url).toBe("postgresql://orm:orm@db:5432/app");
+    expect(orm.postgres.dialect).toBe("postgres");
     expect(orm.redis.url).toBe("redis://cache:6380");
+  });
+
+  it("accepte mysql à la place de postgres", () => {
+    orm = new Orm({
+      mysql: { url: "mysql://orm:orm@db:3306/app" },
+    });
+
+    expect(orm.postgres.url).toBe("mysql://orm:orm@db:3306/app");
+    expect(orm.postgres.dialect).toBe("mysql");
+  });
+
+  it("refuse postgres et mysql ensemble", () => {
+    expect(
+      () =>
+        new Orm({
+          postgres: { url: "postgres://orm:orm@db:5432/app" },
+          mysql: { url: "mysql://orm:orm@db:3306/app" },
+        }),
+    ).toThrow("Use either postgres or mysql, not both");
   });
 
   // Postgres : instance Sequelize créée. Redis : socket réellement ouvert.
@@ -56,6 +76,7 @@ describe("Orm", () => {
 
       await expect(orm.ping()).resolves.toEqual({
         postgres: postgresReachable,
+        mysql: false,
         redis: redisReachable,
       });
     },

@@ -27,7 +27,7 @@ const resetFixtures = async () => {
 
 section("Connexions");
 console.log(await orm.ping());
-// → { postgres: true, redis: true }
+// → { postgres: true, mysql: false, redis: true }
 console.log(
   `PostgreSQL → ${orm.postgres.url} (connected=${orm.postgres.connected})`,
 );

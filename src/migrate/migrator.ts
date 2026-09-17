@@ -10,6 +10,23 @@ import type { PostgresClient } from "../postgres/client.js";
 
 const MIGRATIONS_TABLE = "migrations";
 
+const migrationsTableSql = (dialect: string): string =>
+  dialect === "mysql"
+    ? `
+    CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL UNIQUE,
+      applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    )
+  `
+    : `
+    CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
 /**
  * Contrat d'une migration TypeScript (style Sequelize).
  */
@@ -54,13 +71,7 @@ export async function runMigrations(
     throw new Error("PostgreSQL database instance not found");
   }
 
-  await sequelize.query(`
-    CREATE TABLE IF NOT EXISTS ${MIGRATIONS_TABLE} (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  await sequelize.query(migrationsTableSql(client.dialect));
 
   const [rows] = await sequelize.query(
     `SELECT name FROM ${MIGRATIONS_TABLE} ORDER BY name ASC`,

@@ -22,7 +22,7 @@ orm/
 |---------|----------------|
 | `src/` | Code distribué via npm ; seuls les exports de `index.ts` sont publics |
 | `src/migrate/` | Runner des migrations TypeScript Sequelize + table `migrations` |
-| `src/postgres/` | Client PostgreSQL (Sequelize : init → connexion → CRUD → déconnexion) |
+| `src/postgres/` | Client SQL Sequelize (PostgreSQL ou MySQL : init → connexion → CRUD → déconnexion) |
 | `src/redis/` | Client Redis (`redis` : init → connexion → cache / queue → déconnexion) |
 | `examples/` | Preuves exécutables (Node, compose, migrations) |
 | `tests/` | Comportement attendu de l’API publique |
@@ -37,7 +37,7 @@ Le reste de `src/` est considéré interne jusqu’à export explicite.
 
 L’ORM s’étend autour de :
 
-1. **Connexion** — Postgres (persistance), Redis (cache / files)
+1. **Connexion** — Postgres ou MySQL (persistance), Redis (cache / files)
 2. **Modèles** — description des entités et clés étrangères (`references`)
 3. **Requêtes** — lecture / écriture typées, jointures `include`, transactions (`begin` / `commit` / `rollback`), locks (`lock` / `unlock`)
 4. **Migrations** — fichiers TypeScript (`up`) via `orm.migrate()`
