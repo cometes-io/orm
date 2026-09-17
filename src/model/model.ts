@@ -63,6 +63,12 @@ export type ModelReference<
   model: TModel;
   key: Extract<keyof TModel["schema"], string>;
   as?: string;
+  /**
+   * Alias de la collection 1→N vue depuis le modèle référencé. Par défaut le
+   * nom de cette table (`users`), suffixé par la FK si plusieurs champs
+   * pointent vers le même modèle (`tickets_update_user_id`).
+   */
+  reverseAs?: string;
 };
 
 /**
@@ -169,9 +175,51 @@ type RelationFieldForModel<
     : never;
 }[ReferenceFieldKeys<TSchema>];
 
+/** Champs d'un schéma enfant qui portent une FK vers `TParentSchema` (1→N). */
+type ReverseFieldKeys<
+  TChildSchema extends Record<string, DefineModelSchema>,
+  TParentSchema extends Record<string, DefineModelSchema>,
+> = {
+  [K in ReferenceFieldKeys<TChildSchema>]: TChildSchema[K] extends {
+    references: { model: { schema: infer TTarget } };
+  }
+    ? TTarget extends TParentSchema
+      ? TParentSchema extends TTarget
+        ? K
+        : never
+      : never
+    : never;
+}[ReferenceFieldKeys<TChildSchema>];
+
+/**
+ * Alias de la collection jointe : `references.reverseAs`, sinon le nom de la
+ * table enfant (`users`), suffixé par la FK quand l'enfant en porte plusieurs
+ * vers le même parent (`tickets_update_user_id`).
+ */
+type ReverseAlias<
+  TChildSchema extends Record<string, DefineModelSchema>,
+  TParentSchema extends Record<string, DefineModelSchema>,
+  TField extends ReverseFieldKeys<TChildSchema, TParentSchema>,
+  TChildName extends string,
+> = TChildSchema[TField] extends {
+  references: { reverseAs: infer TAlias extends string };
+}
+  ? TAlias
+  : [ReverseFieldKeys<TChildSchema, TParentSchema>] extends [TField]
+    ? TChildName
+    : `${TChildName}_${TField}`;
+
+/** Modèle joint par une entrée d'`include`. */
+type IncludedModelOf<TInclude> = TInclude extends {
+  model: infer TModel extends ReferencedModelShape;
+}
+  ? TModel
+  : never;
+
+/** Champ FK d'un include N→1 (`never` si le lien est un 1→N). */
 type IncludeRelationField<
   TSchema extends Record<string, DefineModelSchema>,
-  TInclude extends IncludeOption<TSchema>,
+  TInclude,
 > = TInclude extends {
   relation: infer TField extends ReferenceFieldKeys<TSchema>;
 }
@@ -179,6 +227,14 @@ type IncludeRelationField<
   : TInclude extends { model: infer TModel }
     ? RelationFieldForModel<TSchema, TModel>
     : never;
+
+/** Champ FK, porté par l'enfant, d'un include 1→N. */
+type ReverseRelationField<
+  TSchema extends Record<string, DefineModelSchema>,
+  TInclude,
+> = TInclude extends { relation: infer TField extends string }
+  ? Extract<TField, ReverseFieldKeys<IncludedModelOf<TInclude>["schema"], TSchema>>
+  : ReverseFieldKeys<IncludedModelOf<TInclude>["schema"], TSchema>;
 
 type IncludeOptionForField<
   TSchema extends Record<string, DefineModelSchema>,
@@ -209,57 +265,131 @@ export type IncludeOption<
   >;
 }[ReferenceFieldKeys<TSchema>];
 
+/**
+ * Include 1→N : la FK est portée par le modèle joint, pas par ce schéma.
+ * Forme relâchée ; {@link ValidatedIncludes} la resserre sur le modèle passé.
+ */
+export type HasManyIncludeOption = {
+  model: ReferencedModelShape;
+  relation?: string;
+  attributes?: readonly string[];
+  where?: WhereClause<Record<string, DefineModelSchema>>;
+  required?: boolean;
+  include?: readonly HasManyIncludeOption[];
+};
+
 export type IncludeClause<
   TSchema extends Record<string, DefineModelSchema>,
-> = readonly IncludeOption<TSchema>[];
+> = readonly (IncludeOption<TSchema> | HasManyIncludeOption)[];
+
+/**
+ * Include 1→N vers `TChild`, typé sur le schéma de l'enfant.
+ *
+ * `model: never` quand aucune FK ne relie les deux modèles : l'entrée
+ * d'`include` est alors rejetée à la compilation.
+ */
+type HasManyIncludeOptionFor<
+  TParentSchema extends Record<string, DefineModelSchema>,
+  TChild extends ReferencedModelShape,
+> = [ReverseFieldKeys<TChild["schema"], TParentSchema>] extends [never]
+  ? { model: never }
+  : {
+      /** Le modèle enfant, celui qui porte la FK vers ce schéma. */
+      model: TChild;
+      /** Champ FK côté enfant. Inutile s'il n'y en a qu'une vers ce modèle. */
+      relation?: ReverseFieldKeys<TChild["schema"], TParentSchema>;
+      attributes?: AttributeKeys<TChild["schema"]>;
+      where?: WhereClause<TChild["schema"]>;
+      /** `true` génère un INNER JOIN ; `false` (défaut) un LEFT JOIN. */
+      required?: boolean;
+      /** Jointures imbriquées sur le modèle enfant. */
+      include?: IncludeClause<TChild["schema"]>;
+    };
+
+/**
+ * Resserre chaque entrée d'`include` sur le sens réellement disponible :
+ * N→1 quand ce schéma porte la FK, 1→N quand c'est le modèle joint.
+ */
+export type ValidatedIncludes<
+  TSchema extends Record<string, DefineModelSchema>,
+  TIncludes extends IncludeClause<TSchema>,
+> = {
+  [TKey in keyof TIncludes]: [
+    IncludeRelationField<TSchema, TIncludes[TKey]>,
+  ] extends [never]
+    ? HasManyIncludeOptionFor<TSchema, IncludedModelOf<TIncludes[TKey]>>
+    : IncludeOptionForField<
+        TSchema,
+        Extract<
+          IncludeRelationField<TSchema, TIncludes[TKey]>,
+          ReferenceFieldKeys<TSchema>
+        >
+      >;
+};
+
+/** Ligne jointe : partielle sous `attributes`, plus ses include imbriqués. */
+type JoinedRow<TInclude, TJoined extends ReferencedModelShape> = (TInclude extends {
+  readonly attributes: readonly unknown[];
+}
+  ? Partial<TJoined["$schema"]>
+  : TJoined["$schema"]) &
+  ("include" extends keyof TInclude
+    ? TInclude extends {
+        include: infer TNested extends IncludeClause<TJoined["schema"]>;
+      }
+      ? IncludedValues<TJoined["schema"], TNested>
+      : Record<never, never>
+    : Record<never, never>);
 
 type IncludedItemValue<
   TSchema extends Record<string, DefineModelSchema>,
-  TInclude extends IncludeOption<TSchema>,
+  TInclude,
 > = IncludeRelationField<TSchema, TInclude> extends infer TField extends
   ReferenceFieldKeys<TSchema>
-  ? TSchema[TField] extends {
-      references: {
-        model: {
-          readonly $schema: infer TValues extends Record<string, unknown>;
-        };
-      };
-    }
-    ? (TInclude extends { readonly attributes: readonly unknown[] }
-        ? Partial<TValues>
-        : TValues) &
-        (TInclude extends {
-          model: {
-            schema: infer TNestedSchema extends Record<
-              string,
-              DefineModelSchema
-            >;
-          };
-        }
-          ? "include" extends keyof TInclude
-            ? TInclude extends {
-                include: infer TNested extends IncludeClause<TNestedSchema>;
-              }
-              ? IncludedValues<TNestedSchema, TNested>
-              : Record<never, never>
-            : Record<never, never>
-          : Record<never, never>)
-    : never
+  ? JoinedRow<TInclude, ReferencedModelOf<TSchema, TField>>
   : never;
+
+/** Alias sous lequel un include atterrit dans le résultat. */
+type IncludeAlias<
+  TSchema extends Record<string, DefineModelSchema>,
+  TInclude,
+> = [IncludeRelationField<TSchema, TInclude>] extends [never]
+  ? ReverseRelationField<TSchema, TInclude> extends infer TField extends
+      ReverseFieldKeys<IncludedModelOf<TInclude>["schema"], TSchema>
+    ? ReverseAlias<
+        IncludedModelOf<TInclude>["schema"],
+        TSchema,
+        TField,
+        IncludedModelOf<TInclude>["name"]
+      >
+    : never
+  : IncludeRelationField<TSchema, TInclude> extends infer TField extends
+        ReferenceFieldKeys<TSchema>
+    ? ReferenceAlias<TSchema, TField>
+    : never;
+
+/**
+ * Valeur d'un include : la ligne jointe (`null` sans `required`) pour un N→1,
+ * un tableau (vide s'il n'y a rien à joindre) pour un 1→N.
+ */
+type IncludeValue<
+  TSchema extends Record<string, DefineModelSchema>,
+  TInclude,
+> = [IncludeRelationField<TSchema, TInclude>] extends [never]
+  ? JoinedRow<TInclude, IncludedModelOf<TInclude>>[]
+  : TInclude extends { required: true }
+    ? IncludedItemValue<TSchema, TInclude>
+    : IncludedItemValue<TSchema, TInclude> | null;
 
 /** Champs ajoutés au résultat par une clause `include`. */
 export type IncludedValues<
   TSchema extends Record<string, DefineModelSchema>,
   TIncludes extends IncludeClause<TSchema>,
 > = {
-  [TInclude in TIncludes[number] as IncludeRelationField<
+  [TInclude in TIncludes[number] as IncludeAlias<
     TSchema,
     TInclude
-  > extends infer TField extends ReferenceFieldKeys<TSchema>
-    ? ReferenceAlias<TSchema, TField>
-    : never]: TInclude extends { required: true }
-    ? IncludedItemValue<TSchema, TInclude>
-    : IncludedItemValue<TSchema, TInclude> | null;
+  >]: IncludeValue<TSchema, TInclude>;
 };
 
 /**
@@ -473,8 +603,9 @@ export type DefineModelOptions<
     string,
     DefineModelSchema
   >,
+  TName extends string = string,
 > = {
-  name: string;
+  name: TName;
   schema: TSchema;
 };
 
@@ -489,8 +620,9 @@ export interface Model<
     string,
     DefineModelSchema
   >,
+  TName extends string = string,
 > {
-  readonly name: string;
+  readonly name: TName;
   readonly schema: TSchema;
   /**
    * Ligne inférée du schéma (`InferValues<TSchema>`).
@@ -512,7 +644,7 @@ export interface Model<
   >(
     options: {
       attributes: TAttributes;
-      include: TIncludes;
+      include: TIncludes & ValidatedIncludes<TSchema, TIncludes>;
       where?: WhereClause<TSchema>;
       order?: OrderClause<TSchema>;
       limit?: number;
@@ -527,7 +659,7 @@ export interface Model<
   >;
   findAll<const TIncludes extends IncludeClause<TSchema>>(
     options: {
-      include: TIncludes;
+      include: TIncludes & ValidatedIncludes<TSchema, TIncludes>;
       where?: WhereClause<TSchema>;
       order?: OrderClause<TSchema>;
       limit?: number;
@@ -560,7 +692,7 @@ export interface Model<
   >(
     options: {
       attributes: TAttributes;
-      include: TIncludes;
+      include: TIncludes & ValidatedIncludes<TSchema, TIncludes>;
       where?: WhereClause<TSchema>;
       order?: OrderClause<TSchema>;
       limit?: number;
@@ -574,7 +706,7 @@ export interface Model<
   >;
   findOne<const TIncludes extends IncludeClause<TSchema>>(
     options: {
-      include: TIncludes;
+      include: TIncludes & ValidatedIncludes<TSchema, TIncludes>;
       where?: WhereClause<TSchema>;
       order?: OrderClause<TSchema>;
       limit?: number;
@@ -693,32 +825,118 @@ const sequelizeModels = new WeakMap<object, ModelStatic<SequelizeModel>>();
 const referenceAlias = (field: string, reference: ModelReference): string =>
   reference.as ?? (field.endsWith("_id") ? field.slice(0, -3) : field);
 
-/** Champ FK d'un include : `relation` ou unique `references.model` correspondant. */
-const resolveIncludeField = (
-  schema: Record<string, DefineModelSchema>,
-  include: { model: ReferencedModelShape; relation?: string },
-): string => {
-  if (include.relation !== undefined) {
-    return include.relation;
-  }
+/** Alias runtime d'une collection 1→N : `reverseAs`, sinon le nom de l'enfant. */
+const reverseAlias = (
+  childName: string,
+  field: string,
+  reference: ModelReference,
+  siblings: number,
+): string =>
+  reference.reverseAs ?? (siblings > 1 ? `${childName}_${field}` : childName);
 
-  const matches = Object.keys(schema).filter(
-    (name) => schema[name]?.references?.model === include.model,
+/** Champs d'un schéma qui référencent un modèle donné. */
+const fieldsReferencing = (
+  schema: Record<string, DefineModelSchema>,
+  predicate: (reference: ModelReference) => boolean,
+): string[] =>
+  Object.keys(schema).filter((name) => {
+    const reference = schema[name]?.references;
+    return reference !== undefined && predicate(reference);
+  });
+
+/** Champs de l'enfant qui portent une FK vers `parentSchema`. */
+const reverseFields = (
+  parentSchema: Record<string, DefineModelSchema>,
+  child: ReferencedModelShape,
+): string[] =>
+  fieldsReferencing(
+    child.schema,
+    (reference) => reference.model.schema === parentSchema,
   );
 
-  if (matches.length === 0) {
+type ResolvedInclude = {
+  /** Association Sequelize à joindre. */
+  association: string;
+  /** Modèle joint (le référencé en N→1, l'enfant en 1→N). */
+  joined: ReferencedModelShape;
+};
+
+/**
+ * Choisit le sens de la jointure : N→1 si ce schéma porte la FK vers le modèle
+ * inclus, 1→N si c'est le modèle inclus qui porte la FK vers ce schéma.
+ */
+const resolveInclude = (
+  schema: Record<string, DefineModelSchema>,
+  include: { model: ReferencedModelShape; relation?: string },
+): ResolvedInclude => {
+  const owned = fieldsReferencing(
+    schema,
+    (reference) => reference.model === include.model,
+  );
+  const reversed = reverseFields(schema, include.model);
+
+  if (include.relation !== undefined) {
+    const field = include.relation;
+    if (
+      schema[field]?.references === undefined &&
+      include.model.schema[field]?.references === undefined
+    ) {
+      throw new Error(`Field "${field}" is not a declared foreign key`);
+    }
+    if (owned.includes(field)) {
+      return {
+        association: referenceAlias(field, schema[field]!.references!),
+        joined: include.model,
+      };
+    }
+    if (reversed.includes(field)) {
+      return {
+        association: reverseAlias(
+          include.model.name,
+          field,
+          include.model.schema[field]!.references!,
+          reversed.length,
+        ),
+        joined: include.model,
+      };
+    }
+    throw new Error(`Included model does not match foreign key "${field}"`);
+  }
+
+  if (owned.length > 1) {
     throw new Error(
-      `No foreign key references model "${include.model.name}"`,
+      `Several foreign keys reference "${include.model.name}" (${owned.join(", ")}); set relation`,
     );
   }
 
-  if (matches.length > 1) {
+  if (owned.length === 1) {
+    const field = owned[0]!;
+    return {
+      association: referenceAlias(field, schema[field]!.references!),
+      joined: include.model,
+    };
+  }
+
+  if (reversed.length > 1) {
     throw new Error(
-      `Several foreign keys reference "${include.model.name}" (${matches.join(", ")}); set relation`,
+      `Several foreign keys in "${include.model.name}" reference this model (${reversed.join(", ")}); set relation`,
     );
   }
 
-  return matches[0]!;
+  if (reversed.length === 1) {
+    const field = reversed[0]!;
+    return {
+      association: reverseAlias(
+        include.model.name,
+        field,
+        include.model.schema[field]!.references!,
+        1,
+      ),
+      joined: include.model,
+    };
+  }
+
+  throw new Error(`No foreign key references model "${include.model.name}"`);
 };
 
 /** Traduit nos `include` ORM en `include` Sequelize. */
@@ -733,37 +951,31 @@ const formatIncludes = <
   }
 
   return includes.map((include) => {
-    const field = resolveIncludeField(schema, include);
-    const descriptor = schema[field];
-    const reference = descriptor?.references;
-    if (!reference) {
-      throw new Error(`Field "${field}" is not a declared foreign key`);
-    }
-    if (include.model !== reference.model) {
-      throw new Error(`Included model does not match foreign key "${field}"`);
-    }
+    const { association, joined } = resolveInclude(schema, include);
 
-    const target = sequelizeModels.get(reference.model);
+    const target = sequelizeModels.get(joined);
     if (!target) {
       throw new Error(
-        `Referenced model "${reference.model.name}" must be declared first`,
+        `Referenced model "${joined.name}" must be declared first`,
       );
     }
 
+    const joinedSchema = joined.schema as Record<string, DefineModelSchema>;
+
     const where = applySoftDeleteDefault(
-      reference.model.schema as Record<string, DefineModelSchema>,
+      joinedSchema,
       include.where as
         | WhereClause<Record<string, DefineModelSchema>>
         | undefined,
     );
 
     const nested = formatIncludes(
-      reference.model.schema as Record<string, DefineModelSchema>,
+      joinedSchema,
       include.include as IncludeClause<Record<string, DefineModelSchema>> | undefined,
     );
 
     return {
-      association: referenceAlias(field, reference),
+      association,
       ...(include.attributes
         ? {
             attributes: Array.from(include.attributes, String).filter(
@@ -959,8 +1171,10 @@ const prepareFind = <TSchema extends Record<string, DefineModelSchema>>(
  * ```
  */
 export function defineModel<
-  const TSchema extends Record<string, DefineModelSchema>, TORM extends Orm
->(options: DefineModelOptions<TSchema>, ORM: TORM): Model<TSchema> {
+  const TSchema extends Record<string, DefineModelSchema>,
+  TORM extends Orm,
+  TName extends string = string,
+>(options: DefineModelOptions<TSchema, TName>, ORM: TORM): Model<TSchema, TName> {
   const sequelizeModel = ORM.postgres.dbInstance!.define(
     options.name,
     ORM.postgres.formatModelSchema(options.schema),
@@ -1159,16 +1373,21 @@ export function defineModel<
 
       return plainRows as InferValues<TSchema>[];
     }) as Model<TSchema>["findAll"],
-  } as Model<TSchema>;
+  } as Model<TSchema, TName>;
 
   sequelizeModels.set(publicModel, sequelizeModel as ModelStatic<SequelizeModel>);
-  bindBelongsToAssociations(options.schema, sequelizeModel);
+  bindAssociations(options.name, options.schema, sequelizeModel);
 
   return publicModel;
 }
 
-/** Enregistre les `belongsTo` Sequelize à partir des champs `references`. */
-const bindBelongsToAssociations = (
+/**
+ * Enregistre les associations Sequelize d'un modèle à partir de ses
+ * `references` : le `belongsTo` (N→1) et le `hasMany` inverse (1→N) qui rend
+ * la collection joignable depuis le modèle référencé.
+ */
+const bindAssociations = (
+  modelName: string,
   schema: Record<string, DefineModelSchema>,
   sequelizeModel: ModelStatic<SequelizeModel>,
 ) => {
@@ -1185,10 +1404,21 @@ const bindBelongsToAssociations = (
       );
     }
 
+    const siblings = fieldsReferencing(
+      schema,
+      (other) => other.model === reference.model,
+    ).length;
+
     sequelizeModel.belongsTo(target, {
       as: referenceAlias(field, reference),
       foreignKey: field,
       targetKey: reference.key,
+    });
+
+    target.hasMany(sequelizeModel, {
+      as: reverseAlias(modelName, field, reference, siblings),
+      foreignKey: field,
+      sourceKey: reference.key,
     });
   }
 };

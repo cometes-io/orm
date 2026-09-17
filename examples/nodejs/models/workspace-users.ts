@@ -5,7 +5,8 @@ import { UserModel } from "./users.js";
  * Table de liaison workspace ↔ user.
  *
  * `user_id` porte une clé étrangère vers `users.id` : c'est elle qui rend
- * possible `include: [{ model: UserModel }]`.
+ * possible `include: [{ model: UserModel }]` ici, et l'include 1→N dans
+ * l'autre sens (`UserModel.findOne({ include: [{ model: WorkspaceUserModel }] })`).
  * `UserModel` doit donc être déclaré avant ce modèle.
  *
  * La clé primaire est composite (`workspace_id` + `user_id`) : aucune colonne
@@ -22,9 +23,12 @@ export const WorkspaceUserModel = orm.declareModel({
       type: "number",
       primary: true,
       // L'alias du résultat est déduit du nom du champ : user_id → `user`.
+      // `reverseAs` nomme la collection vue depuis `users` (sans lui :
+      // `workspace_users`, le nom de cette table).
       references: {
         model: UserModel,
         key: "id",
+        reverseAs: "memberships",
       },
     },
     role: {

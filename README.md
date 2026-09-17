@@ -188,6 +188,74 @@ const membership = await WorkspaceUserModel.findOne({
 
 L’alias est dérivé de la FK (`user_id` → `user`), ou fixé avec `references.as`. `required: true` passe le `LEFT JOIN` en `INNER JOIN`. `where` filtre le modèle joint. Un `include` peut contenir un autre `include` (jointures imbriquées). `relation` n’est utile que s’il y a plusieurs FK vers le même modèle.
 
+### Relations 1→N
+
+Rien à déclarer sur le parent, et `reverseAs` n’est pas obligatoire. Chaque `references` crée le `hasMany` inverse : l’alias 1→N est le **nom de la table enfant**.
+
+```ts
+export const UserModel = orm.declareModel({
+  name: "users",
+  schema: {
+    id: { type: "number", primary: true },
+    name: { type: "string" },
+  },
+});
+
+export const TicketModel = orm.declareModel({
+  name: "tickets",
+  schema: {
+    id: { type: "number", primary: true },
+    user_id: {
+      type: "number",
+      references: {
+        model: UserModel,
+        key: "id",
+        reverseAs: "tickets", // collection vue depuis `users`
+      },
+    },
+    title: { type: "string" },
+  },
+});
+```
+
+`UserModel` doit être déclaré **avant** `TicketModel`. Sans `reverseAs`, l’alias 1→N est le nom de la table enfant (`tickets`).
+
+```ts
+const user = await UserModel.findOne({
+  attributes: ["id", "name"] as const,
+  include: [
+    { model: TicketModel, attributes: ["id", "title"] as const },
+  ] as const,
+});
+// → { id: 1, name: 'Ada', tickets: [ { id: 1, title: 'Bug' }, { id: 2, title: 'Feat' } ] }
+```
+
+La collection est **toujours un tableau**, vide s’il n’y a rien à joindre — jamais `null`. `required: true` écarte les parents sans enfant (`INNER JOIN`).
+
+S’il y a **plusieurs** `references` vers la même table, l’alias est suffixé par le champ FK pour ne pas se chevaucher, et `relation` devient obligatoire à l’`include` :
+
+```ts
+create_user_id: {
+  type: "number",
+  references: { model: UserModel, key: "id", as: "create_user" },
+},
+update_user_id: {
+  type: "number",
+  references: { model: UserModel, key: "id", as: "update_user" },
+},
+
+await UserModel.findOne({
+  include: [
+    { model: TicketModel, relation: "update_user_id", attributes: ["id"] as const },
+  ] as const,
+});
+// → { …, tickets_update_user_id: [ { id: 1 } ] }
+```
+
+`reverseAs` ne sert qu’à **renommer** une collection (`reverseAs: "memberships"`). Avec plusieurs FK, on peut le poser sur chacune pour éviter le suffixe (`reverseAs: "created_tickets"` / `"updated_tickets"`).
+
+`limit` compte les lignes du **parent**. Détail : [Clés étrangères et include](docs/README.md#clés-étrangères-et-include).
+
 ### Transactions
 
 ```ts

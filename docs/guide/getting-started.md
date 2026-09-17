@@ -36,7 +36,8 @@ npm run example
 Voir le code : [`examples/nodejs/index.ts`](../../examples/nodejs/index.ts).
 
 L’exemple déclare `users` (enum `status`, timestamps, `$schema`) et
-`workspace_users` (clé étrangère vers `users` et `include`, `update` /
+`workspace_users` (clé étrangère vers `users`, `include` N→1 et collection 1→N
+sous `reverseAs`, `update` /
 `delete` par `where`, transaction avec `lock` / `unlock`). Les lectures
 utilisent aussi `order` et `limit`. Détail de l’API :
 [index de la doc](../README.md).

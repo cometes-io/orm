@@ -264,6 +264,10 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
       target: unknown;
       options: { as: string; foreignKey: string; targetKey: string };
     }[] = [];
+    const reverseAssociations: {
+      target: unknown;
+      options: { as: string; foreignKey: string; sourceKey: string };
+    }[] = [];
     const queries: Record<string, unknown>[] = [];
     const sequelizeModels: Record<string, Record<string, unknown>> = {};
 
@@ -288,6 +292,12 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
           options: { as: string; foreignKey: string; targetKey: string },
         ) => {
           associations.push({ target, options });
+        },
+        hasMany: (
+          target: unknown,
+          options: { as: string; foreignKey: string; sourceKey: string },
+        ) => {
+          reverseAssociations.push({ target, options });
         },
         findOne: async (options: Record<string, unknown>) => {
           queries.push(options);
@@ -345,6 +355,7 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
       UserModel,
       WorkspaceUserModel,
       associations,
+      reverseAssociations,
       queries,
       sequelizeModels,
     };
@@ -452,6 +463,163 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
     });
   });
 
+  it("déclare le hasMany inverse et joint la collection depuis le parent", async () => {
+    const {
+      UserModel,
+      WorkspaceUserModel,
+      reverseAssociations,
+      queries,
+      sequelizeModels,
+    } = declareModels();
+
+    await UserModel.findAll({
+      attributes: ["id", "name"] as const,
+      include: [
+        {
+          model: WorkspaceUserModel,
+          attributes: ["workspace_id", "role"] as const,
+        },
+      ] as const,
+    });
+
+    expect(reverseAssociations).toEqual([
+      {
+        target: sequelizeModels["workspace_users"],
+        options: {
+          as: "workspace_users",
+          foreignKey: "user_id",
+          sourceKey: "id",
+        },
+      },
+    ]);
+    expect(queries.at(-1)).toMatchObject({
+      include: [
+        {
+          association: "workspace_users",
+          attributes: ["workspace_id", "role"],
+          required: false,
+        },
+      ],
+    });
+  });
+
+  it("type une collection 1→N en tableau, jamais en null", () => {
+    const { UserModel, WorkspaceUserModel } = declareModels();
+
+    const query = () =>
+      UserModel.findAll({
+        attributes: ["id"] as const,
+        include: [
+          { model: WorkspaceUserModel, attributes: ["role"] as const },
+        ] as const,
+      });
+
+    type Row = Awaited<ReturnType<typeof query>>[number];
+    expectTypeOf<Row["workspace_users"]>().toBeArray();
+    expectTypeOf<Row["workspace_users"][number]["role"]>().toEqualTypeOf<
+      string | undefined
+    >();
+  });
+
+  it("respecte reverseAs pour nommer la collection 1→N", async () => {
+    const { UserModel, reverseAssociations, queries } = declareModels();
+
+    const PostModel = orm.declareModel({
+      name: "posts",
+      schema: {
+        user_id: {
+          type: "number",
+          references: { model: UserModel, key: "id", reverseAs: "articles" },
+        },
+        role: { type: "string" },
+      },
+    });
+
+    expect(reverseAssociations.at(-1)?.options).toMatchObject({
+      as: "articles",
+      foreignKey: "user_id",
+      sourceKey: "id",
+    });
+
+    const query = () =>
+      UserModel.findOne({
+        attributes: ["id"] as const,
+        include: [{ model: PostModel, attributes: ["role"] as const }] as const,
+      });
+    type Row = NonNullable<Awaited<ReturnType<typeof query>>>;
+    expectTypeOf<Row["articles"]>().toBeArray();
+
+    await query();
+    expect(queries.at(-1)).toMatchObject({
+      include: [{ association: "articles" }],
+    });
+  });
+
+  it("suffixe l'alias inverse et exige relation quand l'enfant porte plusieurs FK", async () => {
+    const { UserModel, reverseAssociations, queries } = declareModels();
+
+    const ReviewModel = orm.declareModel({
+      name: "reviews",
+      schema: {
+        author_id: {
+          type: "number",
+          references: { model: UserModel, key: "id" },
+        },
+        editor_id: {
+          type: "number",
+          references: { model: UserModel, key: "id" },
+        },
+      },
+    });
+
+    expect(reverseAssociations.map((entry) => entry.options.as)).toEqual([
+      "workspace_users",
+      "reviews_author_id",
+      "reviews_editor_id",
+    ]);
+
+    await expect(
+      UserModel.findAll({ include: [{ model: ReviewModel }] as const }),
+    ).rejects.toThrow(
+      'Several foreign keys in "reviews" reference this model (author_id, editor_id); set relation',
+    );
+
+    await UserModel.findAll({
+      include: [{ model: ReviewModel, relation: "editor_id" }] as const,
+    });
+    expect(queries.at(-1)).toMatchObject({
+      include: [{ association: "reviews_editor_id" }],
+    });
+  });
+
+  it("refuse un include sans lien de clé étrangère", () => {
+    const { UserModel, WorkspaceUserModel } = declareModels();
+
+    const OrphanModel = orm.declareModel({
+      name: "orphans",
+      schema: { id: { type: "number", primary: true } },
+    });
+
+    const queries = () => [
+      UserModel.findAll({
+        // @ts-expect-error — aucune FK entre users et orphans
+        include: [{ model: OrphanModel }] as const,
+      }),
+      UserModel.findAll({
+        // @ts-expect-error — "role" n'est pas une FK de workspace_users vers users
+        include: [{ model: WorkspaceUserModel, relation: "role" }] as const,
+      }),
+      UserModel.findAll({
+        // @ts-expect-error — "missing" n'est pas un champ de workspace_users
+        include: [
+          { model: WorkspaceUserModel, attributes: ["missing"] as const },
+        ] as const,
+      }),
+    ];
+
+    expect(typeof queries).toBe("function");
+  });
+
   it("type le where de l'include sur le modèle joint", () => {
     const { UserModel, WorkspaceUserModel } = declareModels();
 
@@ -483,6 +651,7 @@ describe("Model.findAll / findOne — include par clé étrangère", () => {
             ? { id: {}, name: {}, company_id: {}, deleted_at: {} }
             : { user_id: {}, role: {} },
       belongsTo: () => undefined,
+      hasMany: () => undefined,
       findOne: async (options: Record<string, unknown>) => {
         queries.push(options);
         return {

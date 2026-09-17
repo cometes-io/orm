@@ -135,14 +135,15 @@ export class Orm {
   }
 
   /** Déclare un modèle (table / collection) avec son schéma. */
-  declareModel<const TSchema extends Record<string, DefineModelSchema>>(
-    options: DefineModelOptions<TSchema>,
-  ): Model<TSchema> {
+  declareModel<
+    const TSchema extends Record<string, DefineModelSchema>,
+    TName extends string,
+  >(options: DefineModelOptions<TSchema, TName>): Model<TSchema, TName> {
     if (!this.postgres.dbInstance) {
       throw new Error("PostgreSQL database instance not found");
     }
 
-    const model = defineModel<TSchema, Orm>(options, this);
+    const model = defineModel<TSchema, Orm, TName>(options, this);
     this.models.push(model as unknown as Model);
     return model;
   }

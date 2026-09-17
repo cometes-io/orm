@@ -117,6 +117,28 @@ console.log("findOne + include →", withUser);
 console.log("utilisateur joint →", withUser?.user?.name);
 // → John Doe (edited)
 
+// La même FK lue dans l'autre sens (1→N) : depuis `users`, les lignes de
+// `workspace_users` arrivent sous l'alias `references.reverseAs`.
+const withMemberships = await UserModel.findOne({
+  attributes: ["id", "name"] as const,
+  where: { id: user.id },
+  include: [
+    {
+      model: WorkspaceUserModel,
+      attributes: ["workspace_id", "role"] as const,
+    },
+  ] as const,
+});
+console.log("findOne + include 1→N →", withMemberships);
+// → {
+//     id: 1,
+//     name: 'John Doe (edited)',
+//     memberships: [ { workspace_id: 1, role: 'member' } ]
+//   }
+// Un 1→N renvoie toujours un tableau — vide s'il n'y a rien à joindre.
+console.log("workspaces →", withMemberships?.memberships.length);
+// → 1
+
 // ---------------------------------------------------------------------------
 // 4. Transaction validée + locks
 // ---------------------------------------------------------------------------

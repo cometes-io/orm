@@ -212,6 +212,49 @@ describe.skipIf(!postgresReachable)("Model (intégration SQL)", () => {
     ).resolves.toBe(0);
   });
 
+  it("include 1→N remonte la collection enfant depuis le parent", async () => {
+    const ada = await PersonModel.create({ name: "Ada" });
+    await PersonModel.create({ name: "Grace" });
+    await MembershipModel.create({ workspace_id: 1, user_id: ada.id });
+    const second = await MembershipModel.create({
+      workspace_id: 2,
+      user_id: ada.id,
+      role: "admin",
+    });
+
+    const rows = await PersonModel.findAll({
+      attributes: ["id", "name"] as const,
+      include: [
+        {
+          model: MembershipModel,
+          attributes: ["workspace_id", "role"] as const,
+        },
+      ] as const,
+      order: ["id"],
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.orm_it_memberships).toEqual([
+      { workspace_id: 1, role: "member" },
+      { workspace_id: 2, role: "admin" },
+    ]);
+    // Un parent sans enfant reste présent avec une collection vide.
+    expect(rows[1]?.orm_it_memberships).toEqual([]);
+
+    // Le soft delete de l'enfant s'applique aussi à la collection jointe.
+    await MembershipModel.deleteOne({
+      workspace_id: second.workspace_id,
+      user_id: second.user_id,
+    });
+    const afterDelete = await PersonModel.findAll({
+      attributes: ["id"] as const,
+      include: [
+        { model: MembershipModel, attributes: ["workspace_id"] as const, required: true },
+      ] as const,
+    });
+    expect(afterDelete).toEqual([{ id: ada.id, orm_it_memberships: [{ workspace_id: 1 }] }]);
+  });
+
   it("transaction(fn) commit et rollback se voient en base", async () => {
     await orm.transaction(async () => {
       await PersonModel.create({ name: "Committed" });

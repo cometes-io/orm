@@ -14,7 +14,7 @@ L’exemple exécutable [`examples/nodejs/`](../examples/nodejs/) reprend tout c
 | [`attributes`](#attributes) | Sélection de colonnes typée |
 | [`where`](#where) | Filtres et opérateurs |
 | [`order` et `limit`](#order-et-limit) | Tri et pagination |
-| [Clés étrangères et `include`](#clés-étrangères-et-include) | Jointures |
+| [Clés étrangères et `include`](#clés-étrangères-et-include) | Jointures N→1 et [1→N](#relations-1n) |
 | [Timestamps et soft delete](#timestamps-et-soft-delete) | Colonnes gérées par l’ORM |
 | [Cache Redis](#cache-redis) | Quand une lecture est cachée |
 | [Transactions](#transactions) | `begin` / `commit` / `rollback` |
@@ -201,7 +201,7 @@ export const WorkspaceUserModel = orm.declareModel({
 });
 ```
 
-L’ORM déclare alors un `belongsTo` Sequelize. L’alias est déduit du nom du champ (`user_id` devient `user`) ; il peut être personnalisé avec `references: { model, key, as: "author" }`.
+L’ORM déclare alors les deux associations Sequelize : le `belongsTo` (N→1, depuis le modèle qui porte la FK) et le `hasMany` inverse (1→N, depuis le modèle référencé). L’alias du N→1 est déduit du nom du champ (`user_id` devient `user`) ; il peut être personnalisé avec `references: { model, key, as: "author" }`.
 
 `include` est disponible uniquement sur `findOne` et `findAll` :
 
@@ -230,7 +230,7 @@ const membership = await WorkspaceUserModel.findOne({
 
 | Clé | Rôle |
 |-----|------|
-| `model` | Le modèle à joindre (doit correspondre à une FK `references`). |
+| `model` | Le modèle à joindre : celui visé par une FK de ce schéma (N→1), ou celui qui porte une FK vers ce schéma (1→N). |
 | `where` | Filtre sur le modèle inclus (soft delete inclus). |
 | `attributes` | Colonnes à charger ; la ligne jointe est alors typée comme partielle. |
 | `required` | `true` → `INNER JOIN` ; `false` (défaut) → `LEFT JOIN`, et la valeur peut être `null`. |
@@ -239,7 +239,48 @@ const membership = await WorkspaceUserModel.findOne({
 
 La ligne jointe est imbriquée sous l’alias, jamais aplatie dans le résultat. Le soft delete (`deleted_at: null`) est aussi appliqué au modèle inclus.
 
-Les `include` se composent à l’infini (`include` dans un `include`). Les relations `hasMany` / `belongsToMany` ne font pas partie de cette version. Toute requête avec `include` contourne le cache Redis.
+Les `include` se composent à l’infini (`include` dans un `include`). Toute requête avec `include` contourne le cache Redis. `belongsToMany` ne fait pas partie de cette version : une table de liaison se traverse avec deux `include` imbriqués.
+
+### Relations 1→N
+
+La même FK se lit dans l’autre sens, sans rien déclarer côté parent : il suffit d’inclure le modèle **enfant**, celui qui porte le `references`.
+
+```ts
+const user = await UserModel.findOne({
+  attributes: ["id", "name"] as const,
+  where: { id: 1 },
+  include: [
+    {
+      model: WorkspaceUserModel,
+      attributes: ["workspace_id", "role"] as const,
+    },
+  ] as const,
+});
+// → { id: 1, name: 'John Doe', workspace_users: [ { workspace_id: 1, role: 'member' } ] }
+```
+
+Les clés sont les mêmes que pour un N→1, avec ces différences :
+
+| Point | Comportement en 1→N |
+|-------|---------------------|
+| Alias | Le nom de la table enfant (`workspace_users`), ou `references.reverseAs` : `references: { model: UserModel, key: "id", reverseAs: "memberships" }`. |
+| Valeur | Toujours un tableau, vide s’il n’y a rien à joindre — jamais `null`, même sans `required`. |
+| `required` | `true` écarte les parents sans enfant (`INNER JOIN`). |
+| `relation` | Le champ FK **côté enfant**, obligatoire si l’enfant porte plusieurs FK vers ce modèle. |
+| `limit` | Compte les lignes du parent : Sequelize passe par une sous-requête. |
+
+Quand un enfant porte plusieurs FK vers le même parent, l’alias par défaut est suffixé par la FK (`reviews_author_id`, `reviews_editor_id`) et `relation` devient obligatoire :
+
+```ts
+await UserModel.findAll({
+  include: [
+    { model: ReviewModel, relation: "author_id", attributes: ["id"] as const },
+  ] as const,
+});
+// → [ { id: 1, …, reviews_author_id: [ { id: 7 } ] } ]
+```
+
+L’ordre des lignes jointes n’est pas réglable : `order` porte sur le modèle interrogé.
 
 ## Timestamps et soft delete
 
