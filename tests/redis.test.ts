@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RedisClient, modelCacheNamespace } from "../src/index.js";
 import { REDIS_URL, redisReachable } from "./helpers/services.js";
 
@@ -6,6 +6,40 @@ describe("RedisClient", () => {
   it("applique l'url fournie", () => {
     const client = new RedisClient({ url: "redis://cache:6380" });
     expect(client.url).toBe("redis://cache:6380");
+  });
+
+  it("garde la socket vivante et journalise les erreurs Redis", () => {
+    const client = new RedisClient({ url: "redis://cache:6380" });
+    const db = client.dbInstance!;
+
+    expect(db.options.pingInterval).toBe(30_000);
+    expect(db.options.socket).toMatchObject({
+      keepAlive: true,
+      keepAliveInitialDelay: 5_000,
+    });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const err = new Error("Socket closed unexpectedly");
+    expect(() => db.emit("error", err)).not.toThrow();
+    expect(errorSpy).toHaveBeenCalledWith("Redis error", err);
+    errorSpy.mockRestore();
+  });
+
+  it("laisse les options d'appel écraser le keep-alive par défaut", () => {
+    const client = new RedisClient({
+      url: "redis://cache:6380",
+      options: {
+        pingInterval: 10_000,
+        socket: { connectTimeout: 1_000, keepAlive: false, keepAliveInitialDelay: 1_000 },
+      },
+    });
+
+    expect(client.dbInstance?.options.pingInterval).toBe(10_000);
+    expect(client.dbInstance?.options.socket).toMatchObject({
+      connectTimeout: 1_000,
+      keepAlive: false,
+      keepAliveInitialDelay: 1_000,
+    });
   });
 
   it("refuse les opérations sans connexion", async () => {

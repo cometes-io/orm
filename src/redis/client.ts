@@ -31,10 +31,7 @@ export class RedisClient {
   constructor(options: RedisOptions = { url: "", options: {} }) {
     this.url = options.url ?? "";
     this.options = options.options ?? {};
-    this.dbInstance = createClient({
-      url: this.url,
-      ...this.options,
-    }) as RedisDbInstance;
+    this.dbInstance = this.#createDbInstance();
   }
 
   /** Indique si le socket Redis est ouvert. */
@@ -48,10 +45,7 @@ export class RedisClient {
    */
   async connect(): Promise<void> {
     if (!this.dbInstance) {
-      this.dbInstance = createClient({
-        url: this.url,
-        ...this.options,
-      }) as RedisDbInstance;
+      this.dbInstance = this.#createDbInstance();
     }
     if (!this.dbInstance.isOpen) {
       try {
@@ -163,6 +157,34 @@ export class RedisClient {
     } catch {
       // Socket déjà fermé : il n'y a plus rien à libérer.
     }
+  }
+
+  /**
+   * Le client garde la socket ouverte. Un proxy ou Redis ferme les connexions
+   * inactives ; sans listener `error`, Node traite `SocketClosedUnexpectedlyError`
+   * comme fatal et arrête le process, alors que le client saurait se reconnecter.
+   *
+   * `pingInterval` envoie un PING applicatif (les proxys ignorent souvent le TCP
+   * keep-alive). node-redis 6 attend `keepAlive` (booléen) et
+   * `keepAliveInitialDelay` (ms) : 5 s avant la première sonde.
+   */
+  #createDbInstance(): RedisDbInstance {
+    const client = createClient({
+      pingInterval: 30_000,
+      ...this.options,
+      url: this.url,
+      socket: {
+        keepAlive: true,
+        keepAliveInitialDelay: 5_000,
+        ...this.options.socket,
+      } as NonNullable<RedisClientOptions["socket"]>,
+    }) as RedisDbInstance;
+
+    client.on("error", (err) => {
+      console.error("Redis error", err);
+    });
+
+    return client;
   }
 
   #assertInstantiated(): void {
